@@ -396,6 +396,11 @@ describe("VETO public read adapter", () => {
     expect(
       readContract.mock.calls.filter(([request]) => request.functionName === "get_campaign_count"),
     ).toHaveLength(1);
+    expect(
+      readContract.mock.calls.filter(
+        ([request]) => request.functionName === "get_campaign_policies",
+      ),
+    ).toHaveLength(0);
   });
 
   it("surfaces structured RPC errors and rejects invalid IDs before a call", async () => {

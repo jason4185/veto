@@ -17,7 +17,7 @@ import { isSuccessful } from "genlayer-js";
 import { createPortal } from "react-dom";
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { formatGen, isContractId } from "./domain";
-import type { GenLayerClient } from "./client";
+import { getVetoTransaction, type GenLayerClient } from "./client";
 import type { ContractWrite } from "./contract";
 import { normalizeVetoError } from "./errors";
 import { explorerTransactionUrl } from "./network";
@@ -41,7 +41,7 @@ export async function verifySuccessfulTransaction(status: TrackedStatus, client:
     throw new Error(
       `Transaction execution failed: ${status.executionResultName ?? status.statusName ?? "unknown outcome"}.`,
     );
-  const result = await client.getTransaction({ hash: status.genlayerTxId as never });
+  const result = await getVetoTransaction(client, status.genlayerTxId);
   if (status.phase !== "finalized" || !isSuccessful(result))
     throw new Error(
       `Transaction is not finalized successfully: ${result.txExecutionResultName ?? result.statusName ?? "unknown outcome"}.`,
@@ -55,7 +55,7 @@ export async function verifySuccessfulDecision(status: TrackedStatus, client: Ge
     throw new Error(
       `Transaction execution failed: ${status.executionResultName ?? status.statusName ?? "unknown outcome"}.`,
     );
-  const result = await client.getTransaction({ hash: status.genlayerTxId as never });
+  const result = await getVetoTransaction(client, status.genlayerTxId);
   if (!isSuccessful(result) || result.statusName !== "ACCEPTED")
     throw new Error(
       `GenLayer did not confirm a successful accepted execution: ${result.txExecutionResultName ?? result.statusName ?? "unknown outcome"}.`,
@@ -235,8 +235,8 @@ export function TransactionRunner({
     const id = state.status.genlayerTxId;
     if (persisted.current === id) return;
     persisted.current = id;
-    rememberPendingTransaction(id, write.method, state.status);
-  }, [state, write.method]);
+    rememberPendingTransaction(id, write.method, state.status, write.args);
+  }, [state, write.args, write.method]);
 
   useEffect(() => {
     if (!acceptedStatus?.genlayerTxId) return;
@@ -251,6 +251,7 @@ export function TransactionRunner({
         ? { executionResultName: acceptedStatus.executionResultName }
         : {}),
       ...(acceptedStatus.successful === undefined ? {} : { successful: acceptedStatus.successful }),
+      args: write.args,
     };
     return watchPendingTransaction(record, transactionKit, client, {
       onStatus: (status) => {
@@ -267,7 +268,7 @@ export function TransactionRunner({
       },
       onError: (reason) => setFinalityError(normalizeVetoError(reason)),
     });
-  }, [acceptedStatus, client, onSuccess, transactionKit, write.method]);
+  }, [acceptedStatus, client, onSuccess, transactionKit, write.args, write.method]);
 
   useEffect(() => {
     if (state.step === "error") {
@@ -285,7 +286,7 @@ export function TransactionRunner({
     handled.current = state.status.genlayerTxId;
     void verifySuccessfulDecision(state.status, client)
       .then(async (id) => {
-        rememberPendingTransaction(id, write.method, state.status);
+        rememberPendingTransaction(id, write.method, state.status, write.args);
         setAcceptedStatus(state.status);
         setBackgroundStatus(state.status);
         await onAccepted?.(id, state.status);
@@ -295,7 +296,7 @@ export function TransactionRunner({
         setVerificationError(error);
         onError(error);
       });
-  }, [client, onAccepted, onDismiss, onError, state, write.method]);
+  }, [client, onAccepted, onDismiss, onError, state, write.args, write.method]);
   const retry = () => {
     setVerificationError(undefined);
     handled.current = "";

@@ -44,10 +44,13 @@ import {
   useProposal,
   useVetoConfig,
   useWalletAgent,
+  invalidateVetoQueries,
+  invalidationKeysForWrite,
 } from "@/lib/veto/hooks";
 import { useWallet } from "@/lib/veto/wallet";
 import { usePendingTransactions } from "@/lib/veto/pending";
 import { TransactionRunner, transactionResultId } from "@/lib/veto/transaction";
+import { getVetoTransaction } from "@/lib/veto/client";
 import { rememberKnownAgentId } from "@/lib/veto/agent-memory";
 import {
   VetoErrorNotice,
@@ -416,7 +419,7 @@ export function CreatorForm() {
                   return;
                 }
                 try {
-                  const receipt = await client.getTransaction({ hash: id as never });
+                  const receipt = await getVetoTransaction(client, id);
                   const campaignId = transactionResultId(receipt);
                   if (!campaignId) {
                     setError(
@@ -431,7 +434,10 @@ export function CreatorForm() {
                     );
                     return;
                   }
-                  await queryClient.invalidateQueries({ queryKey: ["veto"] });
+                  await invalidateVetoQueries(
+                    queryClient,
+                    invalidationKeysForWrite(write, queryClient),
+                  );
                   await navigate({ to: "/campaign/$id", params: { id: campaignId } });
                 } catch (reason) {
                   setError(reason);
@@ -600,7 +606,10 @@ export function RegisterAgentForm() {
               onDone={async (id) => {
                 setTxId(id);
                 setWrite(null);
-                void queryClient.invalidateQueries({ queryKey: ["veto"] });
+                void invalidateVetoQueries(
+                  queryClient,
+                  invalidationKeysForWrite(write, queryClient),
+                );
                 const client = wallet.connectedClient;
                 if (!client) {
                   setError(
@@ -609,7 +618,7 @@ export function RegisterAgentForm() {
                   return;
                 }
                 try {
-                  const receipt = await client.getTransaction({ hash: id as never });
+                  const receipt = await getVetoTransaction(client, id);
                   const agentId = transactionResultId(receipt);
                   if (!agentId) {
                     setError(
@@ -625,7 +634,10 @@ export function RegisterAgentForm() {
                     return;
                   }
                   rememberKnownAgentId(wallet.address, agentId);
-                  await queryClient.invalidateQueries({ queryKey: ["veto"] });
+                  await invalidateVetoQueries(
+                    queryClient,
+                    invalidationKeysForWrite(write, queryClient),
+                  );
                   await navigate({ to: "/agent/$id", params: { id: agentId } });
                 } catch (reason) {
                   setError(reason);
@@ -749,7 +761,7 @@ export function UpdateAgentForm({
           onDone={(id) => {
             setTxId(id);
             setWrite(null);
-            void queryClient.invalidateQueries({ queryKey: ["veto"] });
+            void invalidateVetoQueries(queryClient, invalidationKeysForWrite(write, queryClient));
           }}
           onError={(reason) => {
             setError(reason);
@@ -1323,7 +1335,10 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
                     const recordedId = participation.challengeId;
                     setChallengeId(recordedId ?? "");
                     if (recordedId) {
-                      await queryClient.invalidateQueries({ queryKey: ["veto"] });
+                      await invalidateVetoQueries(
+                        queryClient,
+                        invalidationKeysForWrite(write, queryClient),
+                      );
                       await navigate({ to: "/finding/$id", params: { id: recordedId } });
                       return;
                     }
@@ -1334,7 +1349,10 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
                 } catch (reason) {
                   setError(reason);
                 }
-                void queryClient.invalidateQueries({ queryKey: ["veto"] });
+                void invalidateVetoQueries(
+                  queryClient,
+                  invalidationKeysForWrite(write, queryClient),
+                );
               }}
               onError={(reason) => {
                 setError(reason);
@@ -1608,7 +1626,7 @@ export function FundedProposalForm() {
                 return;
               }
               try {
-                const receipt = await client.getTransaction({ hash: id as never });
+                const receipt = await getVetoTransaction(client, id);
                 const proposalId = transactionResultId(receipt);
                 if (!proposalId) {
                   setError(
@@ -1623,7 +1641,10 @@ export function FundedProposalForm() {
                   );
                   return;
                 }
-                await queryClient.invalidateQueries({ queryKey: ["veto"] });
+                await invalidateVetoQueries(
+                  queryClient,
+                  invalidationKeysForWrite(write, queryClient),
+                );
                 await navigate({ to: "/proposal/$id", params: { id: proposalId } });
               } catch (reason) {
                 setError(reason);

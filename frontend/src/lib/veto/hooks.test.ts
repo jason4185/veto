@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { shouldRetryVetoRead, vetoQueryKey } from "./hooks";
+import { invalidationKeysForWrite, shouldRetryVetoRead, vetoQueryKey } from "./hooks";
+import { addProposalWrite, submitChallengeWrite } from "./contract";
 
 describe("VETO query identity and retry policy", () => {
   it("isolates sender-scoped campaign data by normalized wallet address", () => {
@@ -18,7 +19,7 @@ describe("VETO query identity and retry policy", () => {
 
   it("retries transient RPC failures but not contract-state failures", () => {
     expect(shouldRetryVetoRead(0, new Error("request timed out"))).toBe(true);
-    expect(shouldRetryVetoRead(1, new Error("failed to fetch"))).toBe(true);
+    expect(shouldRetryVetoRead(1, new Error("failed to fetch"))).toBe(false);
     expect(shouldRetryVetoRead(0, new Error("Server busy: all execution slots occupied"))).toBe(
       true,
     );
@@ -27,5 +28,27 @@ describe("VETO query identity and retry policy", () => {
     );
     expect(shouldRetryVetoRead(2, new Error("request timed out"))).toBe(false);
     expect(shouldRetryVetoRead(0, new Error("[EXPECTED] unknown campaign"))).toBe(false);
+  });
+
+  it("targets only affected records after a write", () => {
+    const addProposalKeys = invalidationKeysForWrite(
+      addProposalWrite(
+        "1",
+        "Payment",
+        "Description",
+        "0x1111111111111111111111111111111111111111",
+        1n,
+        1,
+      ),
+    );
+    expect(addProposalKeys).toContainEqual(vetoQueryKey("campaign", "1"));
+    expect(addProposalKeys).toContainEqual(vetoQueryKey("campaign-proposals", "1"));
+    expect(addProposalKeys).not.toContainEqual(vetoQueryKey("proposal", "1"));
+
+    const challengeKeys = invalidationKeysForWrite(
+      submitChallengeWrite("1", "1", "Allegation", "Explanation", "https://x.netlify.app/a"),
+    );
+    expect(challengeKeys).toContainEqual(vetoQueryKey("proposal-challenges", "1"));
+    expect(challengeKeys).toContainEqual(vetoQueryKey("agent", "1"));
   });
 });

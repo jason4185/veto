@@ -21,12 +21,7 @@ import {
   VETO_LIMITS,
 } from "@/lib/veto/domain";
 import { simpleWrite } from "@/lib/veto/contract";
-import {
-  useCampaign,
-  usePendingChallengeCount,
-  useProposal,
-  useProposalChallenges,
-} from "@/lib/veto/hooks";
+import { useCampaign, useProposal, useProposalChallenges } from "@/lib/veto/hooks";
 import { useWallet } from "@/lib/veto/wallet";
 import { pageHead } from "@/lib/veto/metadata";
 import { normalizeVetoError } from "@/lib/veto/errors";
@@ -47,7 +42,6 @@ function ProposalPage() {
   const proposal = proposalQuery.data;
   const campaignQuery = useCampaign(proposal?.campaignId ?? "");
   const challengesQuery = useProposalChallenges(id ?? "");
-  const pendingQuery = usePendingChallengeCount(id ?? "");
   const wallet = useWallet();
   if (!id)
     return (
@@ -184,7 +178,12 @@ function ProposalPage() {
           ["Submission priority", `${proposal.resolutionCursor} / ${proposal.challengeCount}`],
           [
             "Pending evaluations",
-            pendingQuery.data === undefined ? "—" : String(pendingQuery.data),
+            challengesQuery.data
+              ? String(
+                  challengesQuery.data.items.filter((challenge) => challenge.status === "PENDING")
+                    .length,
+                )
+              : "—",
           ],
         ].map(([title, value]) => (
           <div className="metric" key={title}>

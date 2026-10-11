@@ -1,5 +1,5 @@
 import type { Address } from "viem";
-import { getReadClient, type GenLayerClient } from "./client";
+import { getReadClient, getVetoTransaction, type GenLayerClient } from "./client";
 import { vetoContractAddress } from "./network";
 import {
   STUDIO_NEXT_CHAIN_ID,
@@ -18,6 +18,7 @@ import type {
   Participation,
   Proposal,
 } from "./domain";
+import { runRpcRequest } from "./rpc";
 
 // GenLayer returns decoded contract records without generated TypeScript ABI types.
 // Every field is validated at this boundary before it enters the UI model.
@@ -25,6 +26,7 @@ import type {
 type Raw = any;
 const READ_TIMEOUT_MS = 20_000;
 const AGENT_HISTORY_MAX_CANDIDATES = 25;
+export const VETO_READ_STATE: VetoReadState = "latest-nonfinal";
 
 export type ContractWrite = {
   kind: "write";
@@ -81,7 +83,7 @@ function pageLimit(value: number, field: string): number {
   return Math.min(value, 50);
 }
 async function read(client: GenLayerClient, method: string, args: unknown[] = []) {
-  const state: VetoReadState = "latest-nonfinal";
+  const state = VETO_READ_STATE;
   const startedAt = performance.now();
   const sender = client.account?.address;
   const context = {
@@ -98,21 +100,36 @@ async function read(client: GenLayerClient, method: string, args: unknown[] = []
   };
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   try {
-    const request = client.readContract({
-      address: vetoContractAddress,
-      functionName: method,
-      args: args as never[],
-      transactionHashVariant: state as never,
-    });
-    const result = await Promise.race([
-      request,
-      new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(
-          () => reject(new Error(`Studio Next read timed out after ${READ_TIMEOUT_MS} ms.`)),
-          READ_TIMEOUT_MS,
-        );
-      }),
+    const key = JSON.stringify([
+      "contract-read",
+      vetoContractAddress.toLowerCase(),
+      STUDIO_NEXT_CHAIN_ID,
+      state,
+      sender?.toLowerCase() ?? "public",
+      method,
+      args.map((value) => (typeof value === "bigint" ? value.toString() : String(value))),
     ]);
+    const result = await runRpcRequest({
+      key,
+      method,
+      request: async () => {
+        const request = client.readContract({
+          address: vetoContractAddress,
+          functionName: method,
+          args: args as never[],
+          transactionHashVariant: state as never,
+        });
+        return Promise.race([
+          request,
+          new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(
+              () => reject(new Error(`Studio Next read timed out after ${READ_TIMEOUT_MS} ms.`)),
+              READ_TIMEOUT_MS,
+            );
+          }),
+        ]);
+      },
+    });
     if (import.meta.env.DEV)
       console.debug("[veto:read]", {
         ...context,
@@ -206,20 +223,29 @@ async function sdkHistory(client: GenLayerClient, address: string): Promise<Hist
   try {
     // Studio Next currently accepts the SDK-supported address-only form. Passing the
     // optional filter parameter causes an RPC "Too many parameters" error there.
-    const request = client.request({
+    const result = await runRpcRequest({
+      key: `history:${STUDIO_NEXT_CHAIN_ID}:${address.toLowerCase()}`,
       method,
-      params: [address as Address],
+      priority: "background",
+      request: async () => {
+        const request = client.request({
+          method,
+          params: [address as Address],
+        });
+        return Promise.race([
+          request,
+          new Promise<never>((_, reject) => {
+            timeoutId = setTimeout(
+              () =>
+                reject(
+                  new Error(`Studio Next history read timed out after ${READ_TIMEOUT_MS} ms.`),
+                ),
+              READ_TIMEOUT_MS,
+            );
+          }),
+        ]);
+      },
     });
-    const result = await Promise.race([
-      request,
-      new Promise<never>((_, reject) => {
-        timeoutId = setTimeout(
-          () =>
-            reject(new Error(`Studio Next history read timed out after ${READ_TIMEOUT_MS} ms.`)),
-          READ_TIMEOUT_MS,
-        );
-      }),
-    ]);
     if (!Array.isArray(result))
       throw new Error("Studio Next returned an invalid transaction history.");
     if (import.meta.env.DEV)
@@ -372,18 +398,23 @@ export async function getConfig(client = getReadClient()): Promise<ContractConfi
 export async function getCampaignCount(client = getReadClient()) {
   return numberValue(await read(client, "get_campaign_count"), "campaign count");
 }
-export async function getCampaign(campaignId: string, client = getReadClient()): Promise<Campaign> {
+export async function getCampaign(
+  campaignId: string,
+  client = getReadClient(),
+  includePolicies = true,
+): Promise<Campaign> {
   const campaign = mapCampaign(
     await read(client, "get_campaign", [contractId(campaignId, "campaign ID")]),
   );
-  campaign.policies = (
-    await getCampaignPolicies(
-      campaignId,
-      0,
-      Math.min(Math.max(campaign.policyCount, 1), 50),
-      client,
-    )
-  ).items.map((item) => item.text);
+  if (includePolicies)
+    campaign.policies = (
+      await getCampaignPolicies(
+        campaignId,
+        0,
+        Math.min(Math.max(campaign.policyCount, 1), 50),
+        client,
+      )
+    ).items.map((item) => item.text);
   return campaign;
 }
 export async function getCampaigns(
@@ -395,7 +426,7 @@ export async function getCampaigns(
   const pageOffset = Number(pageNumber(offset, "campaign offset"));
   const safeOffset = Math.min(pageOffset, total);
   const safeLimit = pageLimit(limit, "campaign limit");
-  return getCampaignPage(safeOffset, safeLimit, total, client);
+  return getCampaignPage(safeOffset, safeLimit, total, client, false);
 }
 
 async function getCampaignPage(
@@ -403,6 +434,7 @@ async function getCampaignPage(
   limit: number,
   total: number,
   client: GenLayerClient,
+  includePolicies: boolean,
 ): Promise<Page<Campaign>> {
   const safeOffset = offset;
   const safeLimit = pageLimit(limit, "campaign limit");
@@ -410,7 +442,9 @@ async function getCampaignPage(
     { length: Math.min(safeLimit, total - safeOffset) },
     (_, index) => safeOffset + index + 1,
   );
-  const items = await Promise.all(ids.map((id) => getCampaign(String(id), client)));
+  const items = await Promise.all(
+    ids.map((id) => getCampaign(String(id), client, includePolicies)),
+  );
   return {
     items,
     total,
@@ -429,14 +463,19 @@ function sameAddress(left: string, right: string) {
 async function getAllCampaigns(client: GenLayerClient): Promise<Campaign[]> {
   const total = await getCampaignCount(client);
   if (total === 0) return [];
-
-  const pages = await Promise.all(
-    Array.from({ length: Math.ceil(total / CAMPAIGN_PAGE_SIZE) }, (_, pageIndex) => {
-      const offset = pageIndex * CAMPAIGN_PAGE_SIZE;
-      return getCampaignPage(offset, Math.min(CAMPAIGN_PAGE_SIZE, total - offset), total, client);
-    }),
-  );
-  return pages.flatMap((campaignPage) => campaignPage.items);
+  const scanLimit = Math.min(total, 200);
+  const campaigns: Campaign[] = [];
+  for (let offset = 0; offset < scanLimit; offset += CAMPAIGN_PAGE_SIZE) {
+    const page = await getCampaignPage(
+      offset,
+      Math.min(CAMPAIGN_PAGE_SIZE, scanLimit - offset),
+      total,
+      client,
+      false,
+    );
+    campaigns.push(...page.items);
+  }
+  return campaigns;
 }
 
 export async function getMyCampaigns(
@@ -505,6 +544,18 @@ export async function getCreatorCampaigns(
   const safeOffset = Math.min(Number(pageNumber(offset, "campaign offset")), owned.length);
   const safeLimit = pageLimit(limit, "campaign limit");
   const items = owned.slice(safeOffset, safeOffset + safeLimit);
+  await Promise.all(
+    items.map(async (campaign) => {
+      campaign.policies = (
+        await getCampaignPolicies(
+          campaign.id,
+          0,
+          Math.min(Math.max(campaign.policyCount, 1), 50),
+          client,
+        )
+      ).items.map((item) => item.text);
+    }),
+  );
   return {
     items,
     total: owned.length,
@@ -652,7 +703,7 @@ export async function discoverWalletAgent(
 
   for (const candidate of candidates) {
     if (typeof candidate.hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(candidate.hash)) continue;
-    const transaction = await client.getTransaction({ hash: candidate.hash as never });
+    const transaction = await getVetoTransaction(client, candidate.hash);
     if (!finalizedSuccessful(transaction)) continue;
     const agentId = transactionResultId(transaction.result);
     if (!agentId) continue;

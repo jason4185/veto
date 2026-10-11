@@ -2,6 +2,7 @@ export type VetoErrorKind =
   | "wallet_rejected"
   | "wrong_network"
   | "insufficient_gen"
+  | "rate_limited"
   | "rpc_unavailable"
   | "configuration"
   | "authorization"
@@ -94,6 +95,13 @@ export function normalizeVetoError(reason: unknown): VetoError {
       "insufficient_gen",
       technical,
       "Check the wallet’s GEN balance and try again without changing the contract-defined payment amount.",
+    );
+  if (/rate limit|too many requests|too many request|\b429\b/.test(text))
+    return make(
+      "GenLayer Studio Next is receiving too many requests right now. We’ll retry shortly. Your on-chain records remain unchanged.",
+      "rate_limited",
+      technical,
+      "Wait for the shared Studio Next cooldown, then retry this read. Close duplicate VETO tabs while it recovers.",
     );
   if (/vite_veto_contract_address|contract address is missing|not configured/.test(text))
     return make(

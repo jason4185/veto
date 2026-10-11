@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TrackedStatus, TransactionKit } from "@genlayer/transaction-kit";
 import { isSuccessful } from "genlayer-js";
-import { explorerTransactionUrl } from "./network";
-import type { GenLayerClient } from "./client";
+import { explorerTransactionUrl, vetoContractAddress } from "./network";
+import { getVetoTransaction, type GenLayerClient } from "./client";
 import { useWallet } from "./wallet";
+import { invalidateVetoQueries, invalidationKeysForWrite } from "./hooks";
+import { isRpcRateLimitError, rateLimitCooldownMs } from "./rpc";
 
 const STORAGE_KEY = "veto.pending-transactions.v1";
 
@@ -16,6 +18,7 @@ export type PendingTransaction = {
   statusName?: string;
   executionResultName?: string;
   successful?: boolean;
+  args?: unknown[];
 };
 
 type Listener = {
@@ -27,6 +30,9 @@ type Listener = {
 const subscribers = new Set<() => void>();
 const transactionListeners = new Map<string, Set<Listener>>();
 const activeMonitors = new Map<string, Promise<void>>();
+const monitorRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const monitorRetryCounts = new Map<string, number>();
+const MAX_RATE_LIMIT_RETRIES = 5;
 
 function notify() {
   subscribers.forEach((listener) => listener());
@@ -49,7 +55,9 @@ export function readPendingTransactions(): PendingTransaction[] {
         /^0x[0-9a-f]+$/iu.test(String((value as { id?: unknown }).id ?? "")) &&
         typeof (value as { method?: unknown }).method === "string" &&
         typeof (value as { submittedAt?: unknown }).submittedAt === "number" &&
-        typeof (value as { phase?: unknown }).phase === "string",
+        typeof (value as { phase?: unknown }).phase === "string" &&
+        ((value as { args?: unknown }).args === undefined ||
+          Array.isArray((value as { args?: unknown }).args)),
     );
   } catch {
     return [];
@@ -71,6 +79,7 @@ export function rememberPendingTransaction(
   id: `0x${string}`,
   method: string,
   status: TrackedStatus,
+  args: unknown[] = [],
 ) {
   const records = readPendingTransactions();
   const next: PendingTransaction = {
@@ -81,6 +90,7 @@ export function rememberPendingTransaction(
     ...(status.statusName ? { statusName: status.statusName } : {}),
     ...(status.executionResultName ? { executionResultName: status.executionResultName } : {}),
     ...(status.successful === undefined ? {} : { successful: status.successful }),
+    args: args.map((value) => (typeof value === "bigint" ? value.toString() : value)),
   };
   writePendingTransactions([next, ...records.filter((record) => record.id !== id)]);
 }
@@ -120,13 +130,14 @@ async function monitor(id: `0x${string}`, kit: TransactionKit, client: GenLayerC
       id,
       (status) => {
         latest = status;
+        monitorRetryCounts.delete(id);
         updatePendingTransaction(id, status);
         notifyTransaction(id, "onStatus", status);
       },
       { until: "finalized" },
     );
     latest = terminal;
-    const transaction = await client.getTransaction({ hash: id as never });
+    const transaction = await getVetoTransaction(client, id);
     if (terminal.phase !== "finalized" || terminal.statusName !== "FINALIZED") {
       throw new Error("GenLayer returned an unfinalized terminal status.");
     }
@@ -136,12 +147,47 @@ async function monitor(id: `0x${string}`, kit: TransactionKit, client: GenLayerC
       );
     }
     removePendingTransaction(id);
+    monitorRetryCounts.delete(id);
     notifyTransaction(id, "onFinalized", terminal);
   } catch (reason) {
     if (latest.phase === "finalized") removePendingTransaction(id);
     const error = reason instanceof Error ? reason : new Error(String(reason));
     notifyTransaction(id, "onError", error);
+    if (isRpcRateLimitError(reason)) scheduleRateLimitedRetry(id, kit, client, reason);
   }
+}
+
+function startMonitor(id: `0x${string}`, kit: TransactionKit, client: GenLayerClient) {
+  if (activeMonitors.has(id)) return;
+  const task = monitor(id, kit, client).finally(() => activeMonitors.delete(id));
+  activeMonitors.set(id, task);
+}
+
+function scheduleRateLimitedRetry(
+  id: `0x${string}`,
+  kit: TransactionKit,
+  client: GenLayerClient,
+  reason: unknown,
+) {
+  if (monitorRetryTimers.has(id)) return;
+  const attempt = (monitorRetryCounts.get(id) ?? 0) + 1;
+  if (attempt > MAX_RATE_LIMIT_RETRIES) return;
+  monitorRetryCounts.set(id, attempt);
+  const delay = Math.min(Math.max(rateLimitCooldownMs(reason), 5_000), 120_000);
+  const timer = setTimeout(() => {
+    monitorRetryTimers.delete(id);
+    if (transactionListeners.has(id)) startMonitor(id, kit, client);
+  }, delay);
+  monitorRetryTimers.set(id, timer);
+}
+
+function pendingWrite(record: PendingTransaction) {
+  return {
+    kind: "write" as const,
+    address: vetoContractAddress,
+    method: record.method,
+    args: record.args ?? [],
+  };
 }
 
 export function watchPendingTransaction(
@@ -153,14 +199,17 @@ export function watchPendingTransaction(
   const listeners = transactionListeners.get(record.id) ?? new Set<Listener>();
   listeners.add(listener);
   transactionListeners.set(record.id, listeners);
-  if (!activeMonitors.has(record.id)) {
-    const task = monitor(record.id, kit, client).finally(() => activeMonitors.delete(record.id));
-    activeMonitors.set(record.id, task);
-  }
+  startMonitor(record.id, kit, client);
   return () => {
     const current = transactionListeners.get(record.id);
     current?.delete(listener);
-    if (current?.size === 0) transactionListeners.delete(record.id);
+    if (current?.size === 0) {
+      transactionListeners.delete(record.id);
+      const retryTimer = monitorRetryTimers.get(record.id);
+      if (retryTimer) clearTimeout(retryTimer);
+      monitorRetryTimers.delete(record.id);
+      monitorRetryCounts.delete(record.id);
+    }
   };
 }
 
@@ -180,10 +229,13 @@ export function PendingTransactionMonitor() {
   const wallet = useWallet();
   const queryClient = useQueryClient();
   const records = usePendingTransactions();
+  const recordsRef = useRef(records);
+  recordsRef.current = records;
+  const recordKey = records.map((record) => record.id).join("|");
 
   useEffect(() => {
     if (!wallet.kit || !wallet.connectedClient) return;
-    const cleanups = records.map((record) =>
+    const cleanups = recordsRef.current.map((record) =>
       watchPendingTransaction(record, wallet.kit!, wallet.connectedClient!, {
         onStatus: (status) => {
           if (
@@ -192,15 +244,21 @@ export function PendingTransactionMonitor() {
             status.successful === true &&
             status.executionResultName === "FINISHED_WITH_RETURN"
           )
-            void queryClient.invalidateQueries({ queryKey: ["veto"] });
+            void invalidateVetoQueries(
+              queryClient,
+              invalidationKeysForWrite(pendingWrite(record), queryClient),
+            );
         },
         onFinalized: () => {
-          void queryClient.invalidateQueries({ queryKey: ["veto"] });
+          void invalidateVetoQueries(
+            queryClient,
+            invalidationKeysForWrite(pendingWrite(record), queryClient),
+          );
         },
       }),
     );
     return () => cleanups.forEach((cleanup) => cleanup());
-  }, [queryClient, records, wallet.connectedClient, wallet.kit]);
+  }, [queryClient, recordKey, wallet.connectedClient, wallet.kit]);
 
   const first = records[0];
   if (!first) return null;

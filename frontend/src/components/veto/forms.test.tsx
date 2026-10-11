@@ -27,6 +27,7 @@ const mocks = vi.hoisted(() => ({
   navigate: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   getAgent: vi.fn(),
   getAgentCampaignParticipation: vi.fn(),
+  invalidateVetoQueries: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   proposal: undefined as unknown,
   campaign: undefined as unknown,
   participation: undefined as unknown,
@@ -46,6 +47,8 @@ vi.mock("@/lib/veto/wallet", () => ({
 }));
 
 vi.mock("@/lib/veto/hooks", () => ({
+  invalidateVetoQueries: mocks.invalidateVetoQueries,
+  invalidationKeysForWrite: () => [],
   useVetoConfig: () => ({
     data: {
       protocol: "VETO V1",
@@ -200,6 +203,8 @@ afterEach(() => {
   mocks.navigate.mockResolvedValue(undefined);
   mocks.getAgent.mockReset();
   mocks.getAgentCampaignParticipation.mockReset();
+  mocks.invalidateVetoQueries.mockReset();
+  mocks.invalidateVetoQueries.mockResolvedValue(undefined);
   mocks.proposal = undefined;
   mocks.campaign = undefined;
   mocks.participation = undefined;

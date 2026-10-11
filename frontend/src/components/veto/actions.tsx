@@ -5,6 +5,7 @@ import { connectionState } from "@/lib/veto/domain";
 import type { ContractWrite } from "@/lib/veto/contract";
 import { TransactionRunner } from "@/lib/veto/transaction";
 import { useWallet } from "@/lib/veto/wallet";
+import { invalidateVetoQueries, invalidationKeysForWrite } from "@/lib/veto/hooks";
 import { VetoErrorNotice } from "./shared";
 
 export function ContractAction({
@@ -49,7 +50,7 @@ export function ContractAction({
           onSuccess={(id) => {
             setTxId(id);
             setOpen(false);
-            void queryClient.invalidateQueries({ queryKey: ["veto"] });
+            void invalidateVetoQueries(queryClient, invalidationKeysForWrite(write, queryClient));
           }}
           onError={(reason) => {
             setError(reason);

@@ -15,6 +15,9 @@ import { CampaignCards } from "@/components/veto/campaigns";
 import { campaignLabel, connectionState, integrationMessage } from "@/lib/veto/domain";
 import { useCampaigns } from "@/lib/veto/hooks";
 import { pageHead } from "@/lib/veto/metadata";
+
+const CAMPAIGN_DISCOVERY_PAGE_SIZE = 12;
+
 export const Route = createFileRoute("/campaigns")({
   head: () =>
     pageHead(
@@ -28,7 +31,10 @@ function Campaigns() {
   const [search, setSearch] = useState("");
   const [sort, setSort] = useState("newest");
   const [page, setPage] = useState(0);
-  const campaignsQuery = useCampaigns(page * 50, 50);
+  const campaignsQuery = useCampaigns(
+    page * CAMPAIGN_DISCOVERY_PAGE_SIZE,
+    CAMPAIGN_DISCOVERY_PAGE_SIZE,
+  );
   const campaigns = (campaignsQuery.data?.items ?? []).filter((campaign) => {
     const matchesFilter = filter === "All" || campaignLabel(campaign) === filter.toUpperCase();
     const matchesSearch =
@@ -124,7 +130,7 @@ function Campaigns() {
           <PageControls
             page={page}
             total={campaignsQuery.data?.total ?? 0}
-            limit={50}
+            limit={CAMPAIGN_DISCOVERY_PAGE_SIZE}
             onChange={setPage}
           />
         </>

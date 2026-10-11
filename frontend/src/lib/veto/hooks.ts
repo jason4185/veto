@@ -1,6 +1,9 @@
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
+import type { QueryClient, QueryKey } from "@tanstack/react-query";
 import { chainConfig, connectionState, isContractId } from "./domain";
 import type { GenLayerClient } from "./client";
+import type { ContractWrite } from "./contract";
+import type { Challenge, Proposal } from "./domain";
 import { normalizeVetoError } from "./errors";
 import {
   getAgent,
@@ -19,6 +22,7 @@ import {
   getCreatorCampaigns,
   getCampaignParticipants,
   discoverWalletAgent,
+  VETO_READ_STATE,
 } from "./contract";
 import { readKnownAgentId, rememberKnownAgentId } from "./agent-memory";
 
@@ -29,19 +33,172 @@ export const vetoQueryKey = (resource: string, ...parts: unknown[]) => [
   resource,
   contractScope,
   chainConfig.chainId,
+  VETO_READ_STATE,
   ...parts,
 ];
+
+function cached<T>(queryClient: QueryClient | undefined, key: QueryKey): T | undefined {
+  return queryClient?.getQueryData<T>(key);
+}
+
+function cachedResourceKeys(queryClient: QueryClient | undefined, resource: string) {
+  return (
+    queryClient
+      ?.getQueryCache()
+      .findAll({ queryKey: vetoQueryKey(resource) })
+      .map((query) => query.queryKey) ?? []
+  );
+}
+
+export function invalidationKeysForWrite(
+  write: ContractWrite | null | undefined,
+  queryClient?: QueryClient,
+): QueryKey[] {
+  if (!write) return [];
+  const id =
+    typeof write.args[0] === "bigint" ? write.args[0].toString() : String(write.args[0] ?? "");
+  const secondId =
+    typeof write.args[1] === "bigint" ? write.args[1].toString() : String(write.args[1] ?? "");
+  const campaignId = id;
+  const proposalId = id;
+  const challengeId = id;
+  switch (write.method) {
+    case "register_agent":
+      return [vetoQueryKey("wallet-agent")];
+    case "update_agent":
+      return [
+        vetoQueryKey("agent", id),
+        vetoQueryKey("wallet-agent"),
+        vetoQueryKey("agent-challenges", id),
+      ];
+    case "create_campaign":
+      return [
+        ...cachedResourceKeys(queryClient, "campaigns"),
+        vetoQueryKey("my-campaigns"),
+        vetoQueryKey("accounting"),
+      ];
+    case "add_proposal":
+      return [
+        vetoQueryKey("campaign", campaignId),
+        vetoQueryKey("campaign-proposals", campaignId),
+        vetoQueryKey("participants", campaignId),
+        vetoQueryKey("my-campaigns"),
+        vetoQueryKey("accounting"),
+        ...cachedResourceKeys(queryClient, "campaigns"),
+      ];
+    case "submit_challenge": {
+      const proposal = cached<Proposal>(queryClient, vetoQueryKey("proposal", proposalId));
+      const relatedCampaignId = proposal?.campaignId;
+      return [
+        vetoQueryKey("proposal", proposalId),
+        vetoQueryKey("proposal-challenges", proposalId),
+        vetoQueryKey("pending-challenges", proposalId),
+        vetoQueryKey("agent", secondId),
+        vetoQueryKey("agent-challenges", secondId),
+        ...(relatedCampaignId
+          ? [
+              vetoQueryKey("campaign", relatedCampaignId),
+              vetoQueryKey("campaign-proposals", relatedCampaignId),
+              vetoQueryKey("participants", relatedCampaignId),
+              vetoQueryKey("participation", secondId, relatedCampaignId),
+            ]
+          : []),
+      ];
+    }
+    case "evaluate_challenge": {
+      const challenge = cached<Challenge>(queryClient, vetoQueryKey("challenge", challengeId));
+      return [
+        vetoQueryKey("challenge", challengeId),
+        ...(challenge
+          ? [
+              vetoQueryKey("proposal", challenge.proposalId),
+              vetoQueryKey("proposal-challenges", challenge.proposalId),
+              vetoQueryKey("pending-challenges", challenge.proposalId),
+              vetoQueryKey("campaign", challenge.campaignId),
+              vetoQueryKey("campaign-proposals", challenge.campaignId),
+              vetoQueryKey("participants", challenge.campaignId),
+              vetoQueryKey("agent", challenge.agentId),
+              vetoQueryKey("agent-challenges", challenge.agentId),
+            ]
+          : []),
+      ];
+    }
+    case "resolve_proposal": {
+      const proposal = cached<Proposal>(queryClient, vetoQueryKey("proposal", proposalId));
+      return [
+        vetoQueryKey("proposal", proposalId),
+        vetoQueryKey("proposal-challenges", proposalId),
+        ...(proposal
+          ? [
+              vetoQueryKey("campaign", proposal.campaignId),
+              vetoQueryKey("campaign-proposals", proposal.campaignId),
+              vetoQueryKey("participants", proposal.campaignId),
+            ]
+          : []),
+        vetoQueryKey("accounting"),
+      ];
+    }
+    case "execute_proposal":
+    case "claim_proposal_refund":
+      return [
+        vetoQueryKey("proposal", proposalId),
+        ...(cached<Proposal>(queryClient, vetoQueryKey("proposal", proposalId))?.campaignId
+          ? [
+              vetoQueryKey(
+                "campaign",
+                cached<Proposal>(queryClient, vetoQueryKey("proposal", proposalId))!.campaignId,
+              ),
+              vetoQueryKey(
+                "campaign-proposals",
+                cached<Proposal>(queryClient, vetoQueryKey("proposal", proposalId))!.campaignId,
+              ),
+            ]
+          : []),
+        vetoQueryKey("my-campaigns"),
+        vetoQueryKey("accounting"),
+      ];
+    case "close_campaign":
+    case "claim_campaign_remainder":
+      return [
+        vetoQueryKey("campaign", campaignId),
+        ...cachedResourceKeys(queryClient, "campaigns"),
+        vetoQueryKey("my-campaigns"),
+        vetoQueryKey("accounting"),
+      ];
+    case "claim_reward":
+      return [
+        vetoQueryKey("agent", id),
+        vetoQueryKey("agent-claimable", id, secondId),
+        vetoQueryKey("participation", id, secondId),
+        vetoQueryKey("campaign", secondId),
+        vetoQueryKey("accounting"),
+      ];
+    default:
+      return [vetoQueryKey("accounting")];
+  }
+}
+
+export async function invalidateVetoQueries(queryClient: QueryClient, keys: QueryKey[]) {
+  const unique = new Map(keys.map((key) => [JSON.stringify(key), key]));
+  await Promise.all(
+    [...unique.values()].map((queryKey) =>
+      queryClient.invalidateQueries({ queryKey, refetchType: "active" }),
+    ),
+  );
+}
 export function shouldRetryVetoRead(failureCount: number, error: unknown) {
   const normalized = normalizeVetoError(error);
   if (normalized.kind !== "rpc_unavailable") return false;
-  if (/rate limit|too many requests|\b429\b/i.test(normalized.technicalMessage)) return false;
-  return failureCount < 2;
+  return failureCount < 1;
 }
 const options = {
   retry: shouldRetryVetoRead,
-  retryDelay: (attempt: number) => Math.min(500 * 2 ** attempt, 2_000),
-  staleTime: 10_000,
-  refetchOnWindowFocus: true,
+  retryDelay: (attempt: number) =>
+    Math.min(1_000 * 2 ** attempt, 5_000) + Math.floor(Math.random() * 250),
+  staleTime: 30_000,
+  gcTime: 10 * 60_000,
+  refetchOnWindowFocus: false,
+  refetchOnReconnect: false,
 };
 
 export function useVetoConfig() {
@@ -50,6 +207,7 @@ export function useVetoConfig() {
     queryFn: () => getConfig(),
     enabled,
     ...options,
+    staleTime: 5 * 60_000,
   });
 }
 export function useCampaigns(offset = 0, limit = 50) {
@@ -59,6 +217,7 @@ export function useCampaigns(offset = 0, limit = 50) {
     enabled,
     ...options,
     placeholderData: keepPreviousData,
+    staleTime: 60_000,
   });
 }
 export function useMyCampaigns(
@@ -82,8 +241,8 @@ export function useMyCampaigns(
     },
     enabled: enabled && walletReady,
     ...options,
-    refetchInterval: 30_000,
-    refetchOnWindowFocus: true,
+    staleTime: 30_000,
+    refetchInterval: false,
   });
 }
 export function useCampaign(id: string) {
@@ -171,8 +330,9 @@ export function useWalletAgent(address?: string, chainId?: number) {
     },
     enabled: enabled && Boolean(address),
     ...options,
-    staleTime: 60_000,
+    staleTime: 5 * 60_000,
     refetchInterval: false,
+    refetchOnWindowFocus: false,
   });
 }
 export function useAgentChallenges(id: string, offset = 0, limit = 50) {
