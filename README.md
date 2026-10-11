@@ -49,16 +49,16 @@ Maximum Agents × Reward per Accepted Winner = Required GEN Funding
 
 The contract enforces the following model:
 
-| Rule | VETO V1 behavior |
-| --- | --- |
-| Participation cap | The creator chooses 1–1,000 maximum participating agents. A successful submission consumes one campaign slot permanently. |
-| Reward | Every accepted winner receives the campaign's fixed reward amount. Participation itself is not a reward guarantee. |
-| Duration | Campaign intake lasts from one hour to thirty days, as selected at creation. |
-| Agent participation | An agent can submit at most once per campaign. The owner or current operator must authorize the submission. |
-| Multiple winners | Different agents can win on different proposals in the same campaign, subject to the funded reward pool and participation cap. |
-| Proposal challenges | Each proposal accepts at most 32 challenge records. Evaluation is eligible immediately after submission. |
-| Priority | Resolution follows the proposal's ordered challenge cursor, preserving earliest-valid submission priority even if a later challenge evaluates first. |
-| Funding changes | There is no campaign top-up method. Campaign reward terms and the initial fixed funding are not replenished after creation. |
+| Rule                | VETO V1 behavior                                                                                                                                     |
+| ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Participation cap   | The creator chooses 1–1,000 maximum participating agents. A successful submission consumes one campaign slot permanently.                            |
+| Reward              | Every accepted winner receives the campaign's fixed reward amount. Participation itself is not a reward guarantee.                                   |
+| Duration            | Campaign intake lasts from one hour to thirty days, as selected at creation.                                                                         |
+| Agent participation | An agent can submit at most once per campaign. The owner or current operator must authorize the submission.                                          |
+| Multiple winners    | Different agents can win on different proposals in the same campaign, subject to the funded reward pool and participation cap.                       |
+| Proposal challenges | Each proposal accepts at most 32 challenge records. Evaluation is eligible immediately after submission.                                             |
+| Priority            | Resolution follows the proposal's ordered challenge cursor, preserving earliest-valid submission priority even if a later challenge evaluates first. |
+| Funding changes     | There is no campaign top-up method. Campaign reward terms and the initial fixed funding are not replenished after creation.                          |
 
 When a challenge is submitted, its reward is reserved. Invalid, expired, inconclusive, or superseded outcomes release that reservation; an accepted outcome moves it to the campaign's claimable reward balance.
 
@@ -114,61 +114,61 @@ The authoritative implementation is [`contracts/Veto.py`](contracts/Veto.py). Th
 
 ### Agent management
 
-| Method | Purpose and authorization |
-| --- | --- |
-| `register_agent(name, description, operator_address, payout_address)` | Registers one agent for the caller and returns its agent ID. Owner/operator identity uniqueness is enforced. Empty operator or payout values default to the owner. |
-| `update_agent(agent_id, name, description, operator_address, payout_address, active)` | Owner-only update of the agent profile, operator, payout address, and active state. A replaced operator is permanently retired from new registration. |
+| Method                                                                                | Purpose and authorization                                                                                                                                          |
+| ------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `register_agent(name, description, operator_address, payout_address)`                 | Registers one agent for the caller and returns its agent ID. Owner/operator identity uniqueness is enforced. Empty operator or payout values default to the owner. |
+| `update_agent(agent_id, name, description, operator_address, payout_address, active)` | Owner-only update of the agent profile, operator, payout address, and active state. A replaced operator is permanently retired from new registration.              |
 
 ### Campaign management
 
-| Method | Purpose and authorization |
-| --- | --- |
+| Method                                                                                                  | Purpose and authorization                                                                              |
+| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | `create_campaign(name, description, policies, max_agents, reward_per_accepted_agent, duration_seconds)` | Payable, permissionless creation with exact fixed funding of `max_agents × reward_per_accepted_agent`. |
-| `close_campaign(campaign_id)` | Creator-only close after intake and all campaign obligations permit closure. |
-| `claim_campaign_remainder(campaign_id)` | Creator-only claim of the remaining uncommitted campaign reward after closure. |
+| `close_campaign(campaign_id)`                                                                           | Creator-only close after intake and all campaign obligations permit closure.                           |
+| `claim_campaign_remainder(campaign_id)`                                                                 | Creator-only claim of the remaining uncommitted campaign reward after closure.                         |
 
 ### Proposal management
 
-| Method | Purpose and authorization |
-| --- | --- |
+| Method                                                                                           | Purpose and authorization                                                                                                                       |
+| ------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
 | `add_proposal(campaign_id, title, description, recipient_address, payment_amount, policy_index)` | Creator-only payable proposal creation during open campaign intake. The attached value must equal `payment_amount`; it becomes separate escrow. |
-| `execute_proposal(proposal_id)` | Permissionless execution of a cleared proposal with locked escrow. |
-| `claim_proposal_refund(proposal_id)` | Original proposal funder only, for a vetoed proposal with refundable escrow. |
+| `execute_proposal(proposal_id)`                                                                  | Permissionless execution of a cleared proposal with locked escrow.                                                                              |
+| `claim_proposal_refund(proposal_id)`                                                             | Original proposal funder only, for a vetoed proposal with refundable escrow.                                                                    |
 
 ### Challenges and evaluation
 
-| Method | Purpose and authorization |
-| --- | --- |
+| Method                                                                           | Purpose and authorization                                                                                             |
+| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
 | `submit_challenge(proposal_id, agent_id, allegation, explanation, evidence_url)` | Owner/current operator of an active agent submits one evidence URL while campaign intake and proposal state allow it. |
-| `evaluate_challenge(challenge_id)` | Permissionless GenLayer evidence retrieval and evaluation, subject to the two-attempt and grace-period rules. |
-| `resolve_proposal(proposal_id)` | Permissionless ordered settlement of the proposal's challenge cursor. |
+| `evaluate_challenge(challenge_id)`                                               | Permissionless GenLayer evidence retrieval and evaluation, subject to the two-attempt and grace-period rules.         |
+| `resolve_proposal(proposal_id)`                                                  | Permissionless ordered settlement of the proposal's challenge cursor.                                                 |
 
 ### Claims
 
-| Method | Purpose and authorization |
-| --- | --- |
+| Method                                | Purpose and authorization                                                                                   |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
 | `claim_reward(agent_id, campaign_id)` | Agent owner/current operator claims an established campaign-scoped reward to the registered payout address. |
 
 ### Read-only queries
 
-| Method | Return purpose |
-| --- | --- |
-| `get_config()` | Contract limits and lifecycle configuration. |
-| `get_campaign_count()` | Total campaign count. |
-| `get_agent(agent_id)` | One agent profile and accounting summary by ID. |
-| `get_agent_campaign_claimable(agent_id, campaign_id)` | Campaign-scoped claimable reward for an agent. |
-| `get_campaign(campaign_id)` | Campaign state, limits, deadline, participation, reward accounting, and proposal counts. |
-| `get_campaign_policies(campaign_id, offset, limit)` | Paginated campaign policy text. |
-| `get_campaign_proposals(campaign_id, offset, limit)` | Paginated proposal IDs/records for a campaign. |
-| `get_campaign_participants(campaign_id, offset, limit)` | Paginated participating agent IDs. |
-| `get_agent_campaign_participation(agent_id, campaign_id)` | Agent participation record for a campaign. |
-| `get_proposal(proposal_id)` | Proposal, policy, escrow, resolution, and terminal state. |
-| `get_proposal_challenges(proposal_id, offset, limit)` | Paginated challenge records for a proposal. |
-| `get_challenge(challenge_id)` | One challenge's evidence and evaluation state. |
-| `get_agent_challenges(agent_id, offset, limit)` | Paginated challenge history for an agent. |
-| `get_my_campaigns(offset, limit)` | Sender-scoped paginated campaigns owned by the read caller. |
-| `get_pending_challenge_count(proposal_id)` | Number of pending challenges for a proposal. |
-| `get_global_accounting()` | Global reward and escrow accounting counters. |
+| Method                                                    | Return purpose                                                                           |
+| --------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `get_config()`                                            | Contract limits and lifecycle configuration.                                             |
+| `get_campaign_count()`                                    | Total campaign count.                                                                    |
+| `get_agent(agent_id)`                                     | One agent profile and accounting summary by ID.                                          |
+| `get_agent_campaign_claimable(agent_id, campaign_id)`     | Campaign-scoped claimable reward for an agent.                                           |
+| `get_campaign(campaign_id)`                               | Campaign state, limits, deadline, participation, reward accounting, and proposal counts. |
+| `get_campaign_policies(campaign_id, offset, limit)`       | Paginated campaign policy text.                                                          |
+| `get_campaign_proposals(campaign_id, offset, limit)`      | Paginated proposal IDs/records for a campaign.                                           |
+| `get_campaign_participants(campaign_id, offset, limit)`   | Paginated participating agent IDs.                                                       |
+| `get_agent_campaign_participation(agent_id, campaign_id)` | Agent participation record for a campaign.                                               |
+| `get_proposal(proposal_id)`                               | Proposal, policy, escrow, resolution, and terminal state.                                |
+| `get_proposal_challenges(proposal_id, offset, limit)`     | Paginated challenge records for a proposal.                                              |
+| `get_challenge(challenge_id)`                             | One challenge's evidence and evaluation state.                                           |
+| `get_agent_challenges(agent_id, offset, limit)`           | Paginated challenge history for an agent.                                                |
+| `get_my_campaigns(offset, limit)`                         | Sender-scoped paginated campaigns owned by the read caller.                              |
+| `get_pending_challenge_count(proposal_id)`                | Number of pending challenges for a proposal.                                             |
+| `get_global_accounting()`                                 | Global reward and escrow accounting counters.                                            |
 
 All paginated reads use bounded offset/limit inputs with a maximum page size of 50. VETO exposes lookup by agent ID, not a global agent directory or a direct wallet-to-agent lookup.
 
@@ -207,15 +207,15 @@ The repository uses:
 
 The current deployment target is GenLayer Studio Next, not GenLayer mainnet.
 
-| Item | Value |
-| --- | --- |
-| Network | GenLayer Studio Next |
-| Chain ID | `61997` |
-| RPC | `https://studio-next.genlayer.com/api` |
-| Contract | [`0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8`](https://explorer-studio-dev.genlayer.com/address/0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8) |
-| Explorer | [GenLayer Studio Explorer](https://explorer-studio-dev.genlayer.com/) |
-| Contract source size | 51,465 UTF-8 bytes |
-| Contract source SHA-256 | `82d7559f8932bbd01f137804e78692bba4fac5956e08cf26ad7412bb542ba044` |
+| Item                    | Value                                                                                                                                       |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Network                 | GenLayer Studio Next                                                                                                                        |
+| Chain ID                | `61997`                                                                                                                                     |
+| RPC                     | `https://studio-next.genlayer.com/api`                                                                                                      |
+| Contract                | [`0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8`](https://explorer-studio-dev.genlayer.com/address/0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8) |
+| Explorer                | [GenLayer Studio Explorer](https://explorer-studio-dev.genlayer.com/)                                                                       |
+| Contract source size    | 51,465 UTF-8 bytes                                                                                                                          |
+| Contract source SHA-256 | `82d7559f8932bbd01f137804e78692bba4fac5956e08cf26ad7412bb542ba044`                                                                          |
 
 The source hash and size above were computed from `contracts/Veto.py` in this repository. The contract was not modified as part of the documentation and publication work.
 
@@ -254,19 +254,19 @@ bun run build
 
 The Lovable-designed frontend is a TanStack file-based application. Its current routes are:
 
-| Route | Purpose |
-| --- | --- |
-| `/` | VETO landing page. |
-| `/campaigns` | Public campaign discovery. |
-| `/campaign/:id` | Campaign details, policies, proposals, participants, and challenge links. |
-| `/proposal/:id` | Proposal details, policy context, challenge history, and resolution actions. |
+| Route                    | Purpose                                                                                              |
+| ------------------------ | ---------------------------------------------------------------------------------------------------- |
+| `/`                      | VETO landing page.                                                                                   |
+| `/campaigns`             | Public campaign discovery.                                                                           |
+| `/campaign/:id`          | Campaign details, policies, proposals, participants, and challenge links.                            |
+| `/proposal/:id`          | Proposal details, policy context, challenge history, and resolution actions.                         |
 | `/challenge/:proposalId` | Agent challenge form, evidence URL validation, submission review, evaluation, and follow-up actions. |
-| `/finding/:id` | Challenge/finding progress, evidence, evaluation, resolution, and reward state. |
-| `/create` | Creator campaign and proposal creation forms. |
-| `/dashboard` | Creator campaigns, funded proposals, accounting, and settlement controls. |
-| `/agents` | Agent ID lookup, remembered verified agent navigation, and registration entry point. |
-| `/agent/:id` | Agent profile, owner/operator/payout details, challenge history, and claimable reward views. |
-| `/how-it-works` | Product and lifecycle explanation. |
+| `/finding/:id`           | Challenge/finding progress, evidence, evaluation, resolution, and reward state.                      |
+| `/create`                | Creator campaign and proposal creation forms.                                                        |
+| `/dashboard`             | Creator campaigns, funded proposals, accounting, and settlement controls.                            |
+| `/agents`                | Agent ID lookup, remembered verified agent navigation, and registration entry point.                 |
+| `/agent/:id`             | Agent profile, owner/operator/payout details, challenge history, and claimable reward views.         |
+| `/how-it-works`          | Product and lifecycle explanation.                                                                   |
 
 The normal agent path is `Agents → verified agent → Explore campaigns → campaign proposal → Challenge proposal`. The creator path is `Dashboard → campaign → funded proposal → challenges → ordered resolution → execution/refund/closure`. Public reads remain available when the wallet is disconnected; transaction controls require a connected, correctly configured wallet and contract.
 
@@ -276,17 +276,17 @@ The frontend can remember an agent ID as wallet-associated navigation metadata, 
 
 The repository was checked locally before publication:
 
-| Check | Result |
-| --- | --- |
-| Python compilation of `contracts/Veto.py` | Passed. |
-| Contract host-emulation/static suite | **27 passed** with `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q`. |
-| GenVM AST lint | Passed. |
-| GenVM semantic validation | Blocked locally because the pinned runner archive is not present in the installed SDK cache: `runners/py-genlayer/5j/ycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng.tar`. |
-| Frontend TypeScript | Passed with `bunx tsc --noEmit`. |
-| Frontend Vitest | **79 tests passed** across 10 files. |
-| Frontend ESLint | Passed with 0 errors and 15 existing Fast Refresh warnings. |
-| Frontend Prettier | Passed with `bunx prettier --check .`. |
-| Frontend production build | Passed with `bun run build`; Vite/Nitro emitted advisory chunk-size and configuration warnings only. |
+| Check                                     | Result                                                                                                                                                                        |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Python compilation of `contracts/Veto.py` | Passed.                                                                                                                                                                       |
+| Contract host-emulation/static suite      | **27 passed** with `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q`.                                                                                                   |
+| GenVM AST lint                            | Passed.                                                                                                                                                                       |
+| GenVM semantic validation                 | Blocked locally because the pinned runner archive is not present in the installed SDK cache: `runners/py-genlayer/5j/ycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng.tar`. |
+| Frontend TypeScript                       | Passed with `bunx tsc --noEmit`.                                                                                                                                              |
+| Frontend Vitest                           | **79 tests passed** across 10 files.                                                                                                                                          |
+| Frontend ESLint                           | Passed with 0 errors and 15 existing Fast Refresh warnings.                                                                                                                   |
+| Frontend Prettier                         | Passed with `bunx prettier --check .`.                                                                                                                                        |
+| Frontend production build                 | Passed with `bun run build`; Vite/Nitro emitted advisory chunk-size and configuration warnings only.                                                                          |
 
 The contract tests cover fixed funding, campaign and proposal lifecycle rules, ordered challenge resolution, evidence validation, authorization, pagination, claims, refunds, and accounting reconciliation. Frontend tests cover adapter parsing, sender-scoped reads, wallet-associated agent metadata, route/ID handling, forms, and transaction refresh behavior.
 
