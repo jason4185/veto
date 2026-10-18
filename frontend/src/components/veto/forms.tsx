@@ -271,7 +271,7 @@ export function CreatorForm() {
           <h2 className="form-section-title">02 / Governing policy</h2>
           <Field
             label="Policy lines"
-            hint="One policy per line. The contract stores up to 8 rules for the campaign."
+            hint="One policy per line. Use MAX_PAYMENT_WEI:<wei> for a deterministic on-chain payment cap; other rules require authority-authenticated evidence before rewards."
           >
             <textarea
               aria-label="Policy lines"
@@ -989,6 +989,18 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
               )}
               <h3>Applicable policy</h3>
               <p>{proposal.applicablePolicy}</p>
+              {proposal.policyLimitWei && proposal.policyLimitWei > 0n ? (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Deterministic limit: {formatGen(proposal.policyLimitWei)} GEN. The contract
+                  compares this immutable value with the actual escrow amount; submitted evidence
+                  cannot override it.
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground mt-2">
+                  Semantic rule: a VALID model result is not reward-authorizing unless the evidence
+                  hash is also authenticated by the configured authority.
+                </p>
+              )}
               <p className="text-xs text-muted-foreground mt-2">
                 Recipient: {proposal.recipient} · escrow: {formatGen(proposal.paymentAmount)} GEN
               </p>
@@ -1021,7 +1033,7 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
           </Field>
           <Field
             label="Netlify evidence URL"
-            hint="Exactly one HTTPS *.netlify.app URL. The body must match the contract’s VETO-EVIDENCE-V1 schema."
+            hint="Exactly one HTTPS *.netlify.app URL. The body must match VETO-EVIDENCE-V1, but JSON shape, hashes and validator agreement are not proof of external truth. Semantic rewards also require authority authentication."
           >
             <input
               aria-label="Netlify evidence URL"
@@ -1238,7 +1250,8 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
               <p>
                 Your submission is evaluated against the campaign policy. The publisher’s
                 self-declared violation flag is not proof by itself. Submitting evidence does not
-                guarantee a reward.
+                guarantee a reward; semantic evidence without an on-chain authority attestation is
+                rejected for reward purposes.
               </p>
             </div>
             <label className="review-confirm">
@@ -1553,6 +1566,16 @@ export function FundedProposalForm() {
           ))}
         </select>
       </Field>
+      {campaign && review && (
+        <p className="text-xs text-muted-foreground">
+          {(() => {
+            const text = campaign.policies[review.policyIndex - 1] ?? "";
+            return text.startsWith("MAX_PAYMENT_WEI:")
+              ? "This proposal will be checked deterministically against the typed payment limit."
+              : "This semantic policy requires independently authenticated evidence before a finding can earn GEN.";
+          })()}
+        </p>
+      )}
       <WalletGate />
       {Boolean(error) && <VetoErrorNotice error={error} />}
       <Button type="submit">

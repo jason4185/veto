@@ -248,6 +248,16 @@ function FindingPage() {
               <dt>Applicable policy</dt>
               <dd>
                 Policy #{proposal.applicablePolicyIndex}: {proposal.applicablePolicy}
+                {proposal.policyLimitWei && proposal.policyLimitWei > 0n ? (
+                  <span className="block text-xs text-muted-foreground mt-1">
+                    Deterministic on-chain limit: {formatGen(proposal.policyLimitWei)} GEN
+                  </span>
+                ) : (
+                  <span className="block text-xs text-muted-foreground mt-1">
+                    Semantic evidence requires authority authentication before it can authorize a
+                    reward.
+                  </span>
+                )}
               </dd>
               <dt>Evidence URL</dt>
               <dd>
@@ -369,6 +379,12 @@ function FindingPage() {
             {challenge.status === "INVALID" && (
               <p>
                 This finding was rejected by the contract’s GenLayer evaluation and earns no GEN.
+              </p>
+            )}
+            {challenge.evidenceStatus === "AUTH_REQUIRED" && (
+              <p>
+                The submitted record was not independently authenticated. A valid JSON shape,
+                matching hash, or validator agreement cannot authorize a reward.
               </p>
             )}
             {challenge.status === "SUPERSEDED" && (

@@ -13,6 +13,7 @@ import {
   simpleWrite,
   submitChallengeWrite,
   discoverWalletAgent,
+  publishAttestationWrite,
 } from "./contract";
 import { VetoReadError } from "./errors";
 import { vetoContractAddress } from "./network";
@@ -90,6 +91,13 @@ describe("VETO contract write adapter", () => {
     expect(simpleWrite("claim_campaign_remainder", "4").args).toEqual([4n]);
     expect(claimRewardWrite("3", "4").args).toEqual([3n, 4n]);
   });
+
+  it("binds authority attestations to the corrected contract context", () => {
+    expect(publishAttestationWrite("4", "8", 2, "a".repeat(64), 1_800_000_000n)).toMatchObject({
+      method: "publish_attestation",
+      args: [4n, 8n, 2n, "a".repeat(64), 1_800_000_000n],
+    });
+  });
 });
 
 const creator = "0xC8Ba5DA455b011863F2ECa76a6fa21E62Cc91B87";
@@ -124,7 +132,7 @@ const campaign = {
 };
 const policyPage = {
   has_more: false,
-  items: [{ policy_index: 1, text: "Payments require review." }],
+  items: [{ policy_index: 1, text: "Payments require review.", limit_wei: 0 }],
   limit: 1,
   offset: 0,
   total: 1,
@@ -367,6 +375,7 @@ describe("VETO public read adapter", () => {
           title: "8 GEN Treasury Payment",
           winner_challenge_id: 0,
           payment_amount: "8000000000000000000",
+          policy_limit_wei: "5000000000000000000",
         },
       ],
       limit: 50,

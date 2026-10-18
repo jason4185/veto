@@ -343,6 +343,7 @@ function mapProposal(value: unknown): Proposal {
     paymentAmount: integer(item.payment_amount, "proposal payment"),
     applicablePolicyIndex: numberValue(item.applicable_policy_index, "policy index"),
     applicablePolicy: stringValue(item.applicable_policy, "applicable policy"),
+    policyLimitWei: integer(item.policy_limit_wei ?? 0, "policy limit"),
     createdAt: numberValue(item.created_at, "proposal creation time"),
     stage: oneOf(item.status, ["OPEN", "PENDING", "CLEARED", "VETOED"] as const, "proposal status"),
     challengeCount: numberValue(item.challenge_count, "proposal challenge count"),
@@ -393,6 +394,8 @@ export async function getConfig(client = getReadClient()): Promise<ContractConfi
     maxDuration: numberValue(item.max_duration, "maximum duration"),
     maxAgents: numberValue(item.max_agents, "maximum agents"),
     evaluationGrace: numberValue(item.grace, "evaluation grace"),
+    evidenceAuthority: stringValue(item.evidence_authority, "evidence authority"),
+    typedPolicyPrefix: stringValue(item.typed_policy_prefix, "typed policy prefix"),
   };
 }
 export async function getCampaignCount(client = getReadClient()) {
@@ -570,7 +573,7 @@ export async function getCampaignPolicies(
   offset = 0,
   limit = 50,
   client = getReadClient(),
-): Promise<Page<{ index: number; text: string }>> {
+): Promise<Page<{ index: number; text: string; limitWei: bigint }>> {
   return page(
     await read(client, "get_campaign_policies", [
       contractId(campaignId, "campaign ID"),
@@ -583,6 +586,7 @@ export async function getCampaignPolicies(
       return {
         index: numberValue(item.policy_index, "policy index"),
         text: stringValue(item.text, "policy text"),
+        limitWei: integer(item.limit_wei, "policy limit"),
       };
     },
   );
@@ -871,6 +875,20 @@ export function submitChallengeWrite(
     address: vetoContractAddress,
     method: "submit_challenge",
     args: [BigInt(proposalId), BigInt(agentId), allegation, explanation, evidenceUrl],
+  };
+}
+export function publishAttestationWrite(
+  campaignId: string,
+  proposalId: string,
+  policyIndex: number,
+  evidenceSha256: string,
+  expiresAt: bigint,
+): ContractWrite {
+  return {
+    kind: "write",
+    address: vetoContractAddress,
+    method: "publish_attestation",
+    args: [BigInt(campaignId), BigInt(proposalId), BigInt(policyIndex), evidenceSha256, expiresAt],
   };
 }
 export function simpleWrite(

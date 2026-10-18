@@ -1,5 +1,6 @@
 export const GEN_DECIMALS = 18;
 export const GEN_WEI = 10n ** 18n;
+export const TYPED_POLICY_PREFIX = "MAX_PAYMENT_WEI:";
 export const VETO_LIMITS = {
   nameBytes: 120,
   descriptionBytes: 4000,
@@ -103,6 +104,7 @@ export interface Proposal {
   paymentAmount: bigint;
   applicablePolicyIndex: number;
   applicablePolicy: string;
+  policyLimitWei?: bigint;
   createdAt: number;
   stage: ProposalStage;
   challengeCount: number;
@@ -168,6 +170,8 @@ export interface ContractConfig {
   maxDuration: number;
   maxAgents: number;
   evaluationGrace: number;
+  evidenceAuthority?: string;
+  typedPolicyPrefix?: string;
 }
 
 export interface GlobalAccounting {

@@ -105,6 +105,13 @@ export function invalidationKeysForWrite(
           : []),
       ];
     }
+    case "publish_attestation":
+      return [
+        vetoQueryKey("proposal", secondId),
+        vetoQueryKey("proposal-challenges", secondId),
+        vetoQueryKey("campaign", campaignId),
+        vetoQueryKey("campaign-proposals", campaignId),
+      ];
     case "evaluate_challenge": {
       const challenge = cached<Challenge>(queryClient, vetoQueryKey("challenge", challengeId));
       return [

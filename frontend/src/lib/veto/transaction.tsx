@@ -424,8 +424,9 @@ export function TransactionRunner({
                 )}
               </div>
               <p className="text-xs text-muted-foreground">
-                This acceptance is provisional. GEN transfers and other financial effects are only
-                confirmed after FINALIZED with successful execution.
+                This acceptance is provisional. VETO refreshes parent contract state after FINALIZED
+                with successful execution; external GEN delivery still requires chain-layer
+                verification.
               </p>
               {finalityError?.technicalMessage && (
                 <details className="text-xs">

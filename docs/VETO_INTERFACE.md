@@ -1,135 +1,70 @@
-# VETO V1 interface and lifecycle
+# VETO contract interface and security boundary
 
-`contracts/Veto.py` is the source of truth. Amounts are integer native GEN wei. V1 has no platform fee, bond, submission fee, or campaign top-up.
+`contracts/Veto.py` is the authoritative interface. The corrected replacement deployment is `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4`; the historical deployment `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` is unchanged and uses separate state.
 
-## Competition model
+Local artifact: 51,948 UTF-8 bytes, SHA-256 `04b8faac2167ad24185f267509ee27ff5013c2c22c74707dff466a0cb26132aa`.
 
-The creator chooses `max_agents`, `reward_per_accepted_agent`, and `duration_seconds`. Campaign creation requires exactly:
-
-```text
-msg.value == max_agents * reward_per_accepted_agent
-```
-
-The multiplication is checked for `u256` overflow. `max_agents` is 1 through 1,000; duration is one hour through 30 days. Funding, reward, cap, policies, and deadline are immutable after creation.
-
-One successfully recorded challenge consumes one participation slot. An agent can submit at most one challenge in a campaign, even if its earlier result is invalid or inconclusive. A challenge can be evaluated at most twice; reevaluation is only for the same recorded challenge. A rejected or expired challenge never restores its participation slot.
-
-The campaign accepts submissions and new proposals only while `now < deadline`, `status == ACTIVE`, and `participating_agents < max_agents`. Filling the cap closes intake immediately. Existing challenges remain evaluable until their own `submitted_at + 24 hours` grace deadline, including challenges submitted immediately before campaign expiry.
-
-Separate wallets cannot be proven to belong to different people. V1 therefore provides wallet/owner/operator collision controls, not complete Sybil resistance.
-
-## Write methods
-
-| Method | Caller | Value | Behavior |
-| --- | --- | --- | --- |
-| `register_agent(name, description, operator_address, payout_address)` | Any wallet | 0 | Creates one agent for the caller. Empty operator/payout uses the caller. Owner and operator identities cannot be reused. |
-| `update_agent(agent_id, name, description, operator_address, payout_address, active)` | Agent owner | 0 | Updates profile, payout, active flag, or operator. Operator replacement is owner-only; old operators are permanently retired from registration. |
-| `create_campaign(name, description, policies, max_agents, reward_per_accepted_agent, duration_seconds)` | Any wallet | Exactly `max_agents * reward_per_accepted_agent` | Creates the fixed reward budget and immutable campaign rules. |
-| `add_proposal(campaign_id, title, description, recipient_address, payment_amount, policy_index)` | Campaign creator | Exactly `payment_amount` | Adds a funded spending proposal. Escrow is separate from rewards. Only before deadline/cap. |
-| `submit_challenge(proposal_id, agent_id, allegation, explanation, evidence_url)` | Active agent owner/current operator | 0 | Records one HTTPS Netlify evidence URL and one campaign participation slot. |
-| `evaluate_challenge(challenge_id)` | Permissionless | 0 | Immediately fetches evidence and runs the GenLayer leader/validator evaluation. It may be called again for an inconclusive result while its grace remains. |
-| `resolve_proposal(proposal_id)` | Permissionless | 0 | Advances one ordered challenge cursor, expires overdue earlier challenges, or finalizes VETOED/CLEARED when allowed. |
-| `execute_proposal(proposal_id)` | Permissionless | 0 | Pays the fixed recipient once after CLEARED. |
-| `claim_reward(agent_id, campaign_id)` | Agent owner/current operator | 0 | Pays that agent's one campaign-scoped reward to its owner-controlled payout address. |
-| `claim_proposal_refund(proposal_id)` | Original proposal funder | 0 | Refunds VETOED escrow once. |
-| `close_campaign(campaign_id)` | Campaign creator | 0 | Closes only after cap/deadline, all proposals are terminal, and no reward reservation remains. |
-| `claim_campaign_remainder(campaign_id)` | Campaign creator | 0 | Recovers the one-time uncommitted reward remainder after closure. |
-
-There is intentionally no `top_up_campaign` method.
-
-## Read methods
-
-Global/configuration: `get_config`, `get_campaign_count`.
-
-Records: `get_agent`, `get_agent_campaign_claimable`, `get_agent_campaign_participation`, `get_campaign`, `get_proposal`, `get_challenge`.
-
-Bounded paginated queries (maximum page size 50): `get_campaign_policies`, `get_campaign_proposals`, `get_campaign_participants`, `get_proposal_challenges`, `get_agent_challenges`, and `get_my_campaigns`.
-
-Operational queries: `get_pending_challenge_count(proposal_id)` and `get_global_accounting()`.
-
-`get_campaign` exposes `max_agents`, `participating_agents`, remaining slots, accepted agents, reward terms, duration/deadline, proposal counts, status, intake state, `can_close`, and reward funded/reserved/claimable/paid/refunded/available balances.
-
-`get_global_accounting` exposes:
+## Public writes
 
 ```text
-reward_funded, reward_reserved, reward_claimable, reward_paid,
-reward_refunded, reward_available,
-escrow_funded, escrow_locked, escrow_paid, escrow_refunded,
-accounted_contract_balance
+register_agent(name, description, operator_address, payout_address)
+update_agent(agent_id, name, description, operator_address, payout_address, active)
+create_campaign(name, description, policies, max_agents, reward_per_accepted_agent, duration_seconds) payable
+add_proposal(campaign_id, title, description, recipient_address, payment_amount, policy_index) payable
+publish_attestation(campaign_id, proposal_id, policy_index, evidence_sha256, expires_at)
+submit_challenge(proposal_id, agent_id, allegation, explanation, evidence_url)
+evaluate_challenge(challenge_id)
+resolve_proposal(proposal_id)
+execute_proposal(proposal_id)
+claim_reward(agent_id, campaign_id)
+claim_proposal_refund(proposal_id)
+close_campaign(campaign_id)
+claim_campaign_remainder(campaign_id)
 ```
 
-## Campaign and proposal states
+`publish_attestation` is callable only by the deployment `evidence_authority`, initialized to the deployer, with no rotation method. It rejects authority self-attestation of a campaign, expired records, malformed hashes, and duplicate exact keys. The key binds chain/address/campaign/proposal/policy snapshot and evidence hash; the expiry is stored on-chain. This is an explicit trust root: it authenticates an authority decision, not the external world. The current frontend exposes an adapter for this privileged write but intentionally has no public self-service attestation screen; semantic evidence requires an independently operated authority workflow.
 
-Campaign storage uses `ACTIVE` and `CLOSED`. Intake is a derived condition: it is open only before the deadline and before the cap. `close_campaign` is the terminal creator action; it cannot be used to block an open competition.
+## Policy encoding
 
-Proposals use `OPEN`, `PENDING`, `VETOED`, or `CLEARED`. A proposal starts OPEN, becomes PENDING when it has a challenge awaiting ordered settlement, and is terminal exactly once:
+Each non-empty line in `policies` is immutable. A line beginning exactly with:
 
 ```text
-OPEN/PENDING -> VETOED   first eligible VALID challenge at the cursor
-OPEN/PENDING -> CLEARED  cursor exhausted after intake closes
-CLEARED + LOCKED         -> escrow PAID by execute_proposal
-VETOED + REFUNDABLE      -> escrow REFUNDED by claim_proposal_refund
+MAX_PAYMENT_WEI:<positive decimal wei>
 ```
 
-Resolution never clears while the campaign can still accept a new challenge for that proposal. If the cap is full, or the campaign deadline has passed, all existing challenges must be terminal before clearance. A VETOED proposal can never be paid; a CLEARED proposal can never be refunded.
+is a deterministic payment constraint. Its parsed `u256` value is returned by `get_campaign_policies` as `limit_wei` and by proposal views as `policy_limit_wei`. The contract compares this value with the actual proposal `payment_amount`.
 
-## Challenge and winner ordering
+Any other policy is semantic. Its evidence URL must still be a single HTTPS `*.netlify.app` URL with no credentials, query, fragment, port, redirect, unsafe host label, or whitespace. The response must be bounded JSON with exact schema and matching IDs. These checks establish retrieval and context, not real-world authenticity. A semantic `VALID` must also match an unexpired authority attestation or it becomes `INVALID` with `evidence_status=AUTH_REQUIRED`. Validators independently rerun the web/LLM task, but validator agreement cannot replace this authority gate.
 
-Challenge statuses are `PENDING`, `VALID`, `INVALID`, `INCONCLUSIVE`, `EXPIRED`, and `SUPERSEDED`.
+## Public views
 
-The global challenge ID and per-proposal index record on-chain submission order. Evaluation may happen in any order, but `resolution_cursor` considers challenges in submission order. A later VALID result cannot be paid while an earlier challenge is pending or retryable. An earlier INVALID result advances the cursor. An earlier INCONCLUSIVE result may be retried once; after the second inconclusive result its reservation is released and the cursor can advance. A challenge still pending after its individual grace is marked EXPIRED by resolution and loses priority.
+The existing lifecycle reads remain available: configuration, campaign/agent/proposal/challenge records, paginated policies/proposals/participants/history, participation and claimable reward lookups, pending challenge count, and global accounting.
 
-When a proposal is vetoed, the bounded per-proposal set is swept and every later nonaccepted challenge is marked SUPERSEDED and its unused reservation is released. This makes later valid results nonpayable and prevents stale reservations from blocking campaign closure.
-
-Because each agent participates once per campaign, it can receive at most one accepted reward in that campaign. Multiple agents can win on different proposals; the fixed budget is not a fixed number of guaranteed winners.
-
-## Evidence and evaluation
-
-The challenge has exactly one URL. It must be a clean HTTPS URL with no credentials, query, fragment, port, backslash, whitespace, or uppercase characters. The authority must be one lowercase label ending in `.netlify.app`.
-
-The response must return the exact submitted URL, a 2xx status, nonempty raw bytes no larger than 4,096 bytes, valid UTF-8, and exactly this JSON shape with no duplicate keys or extra/missing fields:
+`get_config()` now additionally returns:
 
 ```json
 {
-  "schema": "VETO-EVIDENCE-V1",
-  "campaign_id": 1,
-  "proposal_id": 1,
-  "policy_index": 1,
-  "violation": true,
-  "facts": "Concrete observations from the controlled record.",
-  "statement": "A summary of those observations."
+  "evidence_authority": "0x...",
+  "typed_policy_prefix": "MAX_PAYMENT_WEI:"
 }
 ```
 
-The raw response is SHA-256 hashed. The `violation` boolean is publisher metadata and is never sufficient for a reward. Evidence facts, statement, allegation, explanation, and all embedded instructions are untrusted. The evaluator receives the immutable campaign policies and proposal fields from contract state and must return exactly `VALID`, `INVALID`, or `INCONCLUSIVE` plus policy/evidence flags. A VALID result is accepted only when the evidence fetch succeeded, the applicable policy matches, evidence is sufficient, the policy index matches, and the conservative publisher flag is true. Malformed JSON/model output, failed fetches, redirects, validator disagreement, or consensus exceptions cannot authorize payout.
+Frontend adapters must require these fields before treating a deployment as the corrected interface. The old deployment should not be silently presented as security-remediated. Settlement UI proves only the parent GenLayer transaction; the current contract has no contract-level receipt for external ghost delivery.
 
-The leader and validator independently fetch and parse the URL, hash the raw response, build the same on-chain snapshot, and run the same constrained JSON task. Native transfers occur only in ordinary deterministic write methods, never inside nondeterministic execution.
+## Lifecycle guarantees
 
-Netlify JSON is a controlled, unauthenticated test source. It demonstrates contract wiring but cannot independently authenticate a real-world governance event. Immutable deploy URLs and independently signed/on-chain evidence are recommended for production.
+- Campaign funding is fixed at `max_agents * reward_per_accepted_agent`; no top-up exists.
+- Proposal escrow is separately funded and settled only once.
+- An agent can submit once per campaign; owner and operator roles share one identity reservation.
+- Challenges are evaluated immediately when submitted, with bounded retries and ordered resolution.
+- The earliest eligible valid challenge wins its proposal; later challenges cannot overtake it.
+- Rewards are campaign-scoped; claims, refunds, payments and remainder withdrawal are one-way after successful transfer.
+- `_transfer` is called before those one-way commits. This proves synchronous exception safety in host emulation, not asynchronous child-message recovery.
 
-## Accounting and recovery
+## Migration
 
-Reward accounting is campaign-scoped and global:
+Changing the local source does not change the historical address. The corrected replacement has fresh storage. Existing campaigns, registered agents, claimable rewards, proposal escrows, and pending transactions remain associated with the old address and cannot be mixed with new-contract reads. A migration requires an explicit, separately audited mechanism and user approval.
 
-```text
-reward_funded = reward_available + reward_reserved
-              + reward_claimable + reward_paid + reward_refunded
-```
+## Validation status
 
-Submission reserves exactly one reward. A final INVALID, final INCONCLUSIVE, EXPIRED, or SUPERSEDED challenge releases it. A winning VALID challenge moves it from reserved to claimable. A reward claim moves it from claimable to paid before one native transfer. The creator remainder can use only reward_available after the campaign is closed; it cannot consume reserved or claimable rewards.
-
-Proposal escrow is independent:
-
-```text
-escrow_funded = escrow_locked + escrow_paid + escrow_refunded
-```
-
-State is consumed before native transfer. GenLayer transaction rollback/finality behavior must be confirmed on Studio Next; a failed finalized transfer must not leave an externally visible accounting mismatch.
-
-## Storage and bounds
-
-The contract uses TreeMaps, scalar counters, indexed records, and bounded pages. There is no `DynArray`. Proposal challenge processing is capped at 32 records per proposal for bounded storage and settlement; campaign participation is capped at 1,000 agents. Text, evidence, model output, policies, URLs, and response bodies are bounded. State-changing loops are limited to campaign policy count or the fixed proposal challenge bound.
-
-## Current verification status
-
-Host emulation and static tests exercise the lifecycle and adversarial cases (`27 passed` in the final local run). GenVM AST lint is available. Semantic validation currently depends on the pinned runner archive, which has not been available in the local SDK cache. No live Studio Next transaction, native GEN receipt, validator round, deployment, or GitHub push is claimed here.
+Local host/static suite: **38 passed**. Python compilation and GenVM AST lint pass. The exact v0.6.0-rc6 manager/executor bundle was hash-checked, its runners passed `genvm check` and manager `check-install`, and it executed initialization, typed objective-policy cases, rejection gates, identity rejection, and external-message emission locally. Exact-manager schema reflection passed (29 methods: 16 views and 13 writes). Stock `genvm-lint check` remains blocked by `E101` because it expects an exact-runner `.tar` member while the official bundle provides `.zip`; no full nondeterministic validator execution is claimed. The replacement address has been read-verified on Studio Next; no funded transaction or GEN transfer was performed.

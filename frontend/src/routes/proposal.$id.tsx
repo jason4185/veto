@@ -214,6 +214,11 @@ function ProposalPage() {
           <div className="detail-block">
             <h3>Immutable policy</h3>
             <p>{proposal.applicablePolicy}</p>
+            <p className="text-xs text-muted-foreground mt-2">
+              {proposal.policyLimitWei && proposal.policyLimitWei > 0n
+                ? `Deterministic payment limit: ${formatGen(proposal.policyLimitWei)} GEN. The contract compares the actual escrow amount directly.`
+                : "Semantic findings require authority-authenticated evidence before they can authorize a reward."}
+            </p>
             <p className="text-xs text-muted-foreground mt-3">
               Funder: {shortAddress(proposal.funder)} · recipient: {proposal.recipient}
             </p>

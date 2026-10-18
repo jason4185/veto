@@ -41,6 +41,9 @@ frontend/.nitro/
 frontend/.wrangler/
 frontend/.dev.vars
 
+# Locally downloaded GenVM runner artifacts
+runners/
+
 # Logs, local caches, and temporary output
 *.log
 npm-debug.log*

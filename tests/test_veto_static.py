@@ -37,7 +37,7 @@ def test_storage_is_treemap_only_for_collections():
     assert annotations
     for node in annotations:
         annotation = ast.unparse(node.annotation)
-        assert annotation.startswith("u256") or annotation.startswith("TreeMap[")
+        assert annotation in ("Address",) or annotation.startswith("u256") or annotation.startswith("TreeMap[")
         assert "list" not in annotation.lower()
         assert "dict" not in annotation.lower()
 
@@ -46,6 +46,7 @@ def test_public_interface_contains_lifecycle_and_reads():
     methods = public_methods()
     expected_writes = {
         "register_agent", "update_agent", "create_campaign", "add_proposal",
+        "publish_attestation",
         "submit_challenge", "evaluate_challenge", "resolve_proposal", "execute_proposal",
         "claim_reward", "claim_proposal_refund", "close_campaign", "claim_campaign_remainder",
     }
@@ -76,10 +77,23 @@ def test_challenge_is_one_url_and_rewards_are_campaign_scoped():
     assert "campaign.participating_agents" in SOURCE
     assert "campaign_agent_challenge" in SOURCE
     assert "reward_per_accepted_agent" in SOURCE
-    assert "owner_agent_id" in SOURCE
-    assert "operator_agent_id" in SOURCE
+    assert "identity_agent_id" in SOURCE
+    assert "policy_limits" in SOURCE
+    assert "attestations" in SOURCE
     assert '"facts"' in SOURCE
     assert "object_pairs_hook" in SOURCE
+
+
+def test_typed_policy_storage_and_objective_verification_are_explicit():
+    campaign = next(node for node in TREE.body if isinstance(node, ast.ClassDef) and node.name == "CampaignState")
+    fields = {node.target.id: ast.unparse(node.annotation) for node in campaign.body if isinstance(node, ast.AnnAssign)}
+    veto = veto_class()
+    storage = {node.target.id: ast.unparse(node.annotation) for node in veto.body if isinstance(node, ast.AnnAssign)}
+    assert storage["campaign_policies"] == "TreeMap[str, str]"
+    assert "max_payment" not in fields
+    assert "payment_limit" not in fields
+    assert "MAX_PAY_PREFIX" in SOURCE
+    assert "DETERMINISTIC" in SOURCE
 
 
 def test_nondeterminism_and_native_transfer_are_isolated():

@@ -2,7 +2,7 @@
 
 VETO is a GenLayer-powered governance security platform for scrutinizing treasury proposals before funds move. Creators launch GEN-funded campaigns, define governance policies, and publish spending proposals. Registered agents investigate those proposals and submit evidence when they identify a possible policy violation. GenLayer evaluates the evidence against the applicable policy; the first eligible valid challenge in proposal order can veto the payment and make a GEN reward claimable.
 
-The repository contains the VETO V1 GenLayer contract, its host-emulation and static tests, and a Lovable-designed TanStack frontend. The `netlify-evidence/` directory is reserved for controlled evidence fixtures.
+The repository contains the corrected VETO GenLayer contract, its host-emulation and static tests, and a Lovable-designed TanStack frontend. The `netlify-evidence/` directory is reserved for controlled evidence fixtures. The corrected source is deployed at the replacement Studio Next address below; the historical deployment remains unchanged.
 
 ## Overview
 
@@ -18,7 +18,7 @@ The contract does not promise that participation produces a reward. A reward is 
 1. A creator launches a campaign with one or more governance policies, a participation cap, a reward per accepted winner, a fixed funding amount, and a duration.
 2. The creator adds treasury proposals and deposits each proposal's exact payment amount as separate escrow.
 3. Registered agents inspect the proposal and submit one challenge containing an allegation, explanation, and one HTTPS Netlify evidence URL.
-4. GenLayer retrieves and validates the evidence, then evaluates the evidence against the campaign policy through nondeterministic leader/validator consensus.
+4. Objective `MAX_PAYMENT_WEI:<wei>` policies are checked deterministically against the immutable proposal amount. Other policies use GenLayer leader/validator evaluation, but a semantic `VALID` result also requires an on-chain authority attestation for the exact evidence and proposal snapshot.
 5. The contract resolves challenges in submission order. The earliest challenge that becomes valid can veto the proposal; later unresolved challenges can be superseded.
 6. A winning agent claims the campaign reward when the contract records the entitlement.
 7. A vetoed proposal makes its escrow refundable to the original funder. A cleared proposal can be executed to the recipient.
@@ -49,7 +49,7 @@ Maximum Agents × Reward per Accepted Winner = Required GEN Funding
 
 The contract enforces the following model:
 
-| Rule                | VETO V1 behavior                                                                                                                                     |
+| Rule                | Corrected local VETO behavior                                                                                                                        |
 | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Participation cap   | The creator chooses 1–1,000 maximum participating agents. A successful submission consumes one campaign slot permanently.                            |
 | Reward              | Every accepted winner receives the campaign's fixed reward amount. Participation itself is not a reward guarantee.                                   |
@@ -82,7 +82,7 @@ The fetched response must be a non-empty UTF-8 JSON object no larger than 4,096 
 
 The campaign, proposal, and policy identifiers must match the on-chain context. `facts` and `statement` are required strings with a 2,000-byte limit each. Duplicate JSON keys, missing keys, extra keys, malformed JSON, non-2xx responses, oversized bodies, and mismatched context are rejected before evaluation. The contract stores a SHA-256 hash of the accepted raw evidence bytes.
 
-The evidence publisher's `violation` field is untrusted metadata; it cannot independently make a challenge valid. GenLayer evaluates the immutable policy and proposal context together with the evidence and challenge explanation. The normalized result must use one of `VALID`, `INVALID`, or `INCONCLUSIVE`, and a `VALID` result must match the applicable policy, have sufficient evidence, and pass the contract's evidence checks. A substantive validator reruns the retrieval, parsing, hashing, and evaluation before consensus is accepted. Each challenge has at most two evaluation attempts; a final inconclusive result does not become a reward entitlement.
+The evidence publisher's `violation` field is untrusted metadata; it cannot independently make a challenge valid. Use `MAX_PAYMENT_WEI:<positive decimal wei>` for objectively checkable payment limits. For semantic policies, the configured authority must publish `publish_attestation(campaign_id, proposal_id, policy_index, evidence_sha256, expires_at)` after independent review. The attestation binds the chain, contract, exact proposal/policy snapshot, evidence hash, and expiry. Netlify, HTTPS, a matching hash, and validator agreement are not independent proof by themselves. Each challenge has at most two evaluation attempts; a final inconclusive or unauthenticated result does not become a reward entitlement.
 
 ## Settlement and Rewards
 
@@ -126,6 +126,7 @@ The authoritative implementation is [`contracts/Veto.py`](contracts/Veto.py). Th
 | `create_campaign(name, description, policies, max_agents, reward_per_accepted_agent, duration_seconds)` | Payable, permissionless creation with exact fixed funding of `max_agents × reward_per_accepted_agent`. |
 | `close_campaign(campaign_id)`                                                                           | Creator-only close after intake and all campaign obligations permit closure.                           |
 | `claim_campaign_remainder(campaign_id)`                                                                 | Creator-only claim of the remaining uncommitted campaign reward after closure.                         |
+| `publish_attestation(campaign_id, proposal_id, policy_index, evidence_sha256, expires_at)`             | Deployment authority only; records one context-bound semantic evidence authorization with expiry.       |
 
 ### Proposal management
 
@@ -176,7 +177,7 @@ All paginated reads use bounded offset/limit inputs with a maximum page size of 
 
 The frontend is a read/write client for the deployed contract. It does not replace contract state with a database or fabricated campaign, agent, reward, or transaction records. The connected wallet supplies identity for authorized writes and sender-scoped reads; public campaign, proposal, challenge, and agent reads do not require a wallet.
 
-Deterministic checks such as authorization, limits, accounting, URL shape, context matching, and state transitions execute in the contract. Evidence retrieval and policy evaluation use GenLayer's nondeterministic execution and independent validator comparison. Native GEN transfers occur only in deterministic settlement paths.
+Deterministic checks such as authorization, typed payment limits, accounting, URL shape, context matching, attestations, and state transitions execute in the contract. Only unsupported semantic policies use GenLayer nondeterministic execution and independent validator comparison, and consensus cannot replace the attestation gate. Native GEN transfers occur only in deterministic settlement paths.
 
 ```mermaid
 flowchart LR
@@ -212,12 +213,13 @@ The current deployment target is GenLayer Studio Next, not GenLayer mainnet.
 | Network                 | GenLayer Studio Next                                                                                                                        |
 | Chain ID                | `61997`                                                                                                                                     |
 | RPC                     | `https://studio-next.genlayer.com/api`                                                                                                      |
-| Contract                | [`0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8`](https://explorer-studio-dev.genlayer.com/address/0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8) |
+| Corrected contract      | [`0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4`](https://explorer-studio-dev.genlayer.com/address/0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4) |
+| Historical contract     | [`0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8`](https://explorer-studio-dev.genlayer.com/address/0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8) |
 | Explorer                | [GenLayer Studio Explorer](https://explorer-studio-dev.genlayer.com/)                                                                       |
-| Contract source size    | 51,465 UTF-8 bytes                                                                                                                          |
-| Contract source SHA-256 | `82d7559f8932bbd01f137804e78692bba4fac5956e08cf26ad7412bb542ba044`                                                                          |
+| Current local source size    | 51,948 UTF-8 bytes                                                                                                                       |
+| Current local source SHA-256 | `04b8faac2167ad24185f267509ee27ff5013c2c22c74707dff466a0cb26132aa`                                                                     |
 
-The source hash and size above were computed from `contracts/Veto.py` in this repository. The contract was not modified as part of the documentation and publication work.
+The deployed source retrieved from the corrected address is 51,948 bytes and matches the local `contracts/Veto.py` SHA-256 exactly. The historical address was not modified and has separate state. No campaign funding or GEN transfer was performed during this verification.
 
 ## Running Locally
 
@@ -235,7 +237,7 @@ The development server normally starts at `http://localhost:5173/`. The frontend
 ```dotenv
 VITE_GENLAYER_RPC_URL=https://studio-next.genlayer.com/api
 VITE_GENLAYER_CHAIN_ID=61997
-VITE_VETO_CONTRACT_ADDRESS=0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8
+VITE_VETO_CONTRACT_ADDRESS=0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4
 ```
 
 Do not place private keys, seed phrases, wallet exports, or secret API credentials in `.env.local`. The repository ignores local environment files while preserving `frontend/.env.example`.
@@ -279,29 +281,30 @@ The repository was checked locally before publication:
 | Check                                     | Result                                                                                                                                                                        |
 | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Python compilation of `contracts/Veto.py` | Passed.                                                                                                                                                                       |
-| Contract host-emulation/static suite      | **27 passed** with `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q`.                                                                                                   |
+| Contract host-emulation/static suite      | **38 passed** with `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q`.                                                                                                   |
 | GenVM AST lint                            | Passed.                                                                                                                                                                       |
-| GenVM semantic validation                 | Blocked locally because the pinned runner archive is not present in the installed SDK cache: `runners/py-genlayer/5j/ycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng.tar`. |
+| GenVM validation                         | Exact v0.6.0-rc6 manager/executor ran initialization, typed objective evaluations, invalid constraints, authority/context gates, cross-role identity rejection, and external-message emission. Stock `genvm-lint check` remains blocked by `E101` because it expects a `.tar` runner member while the official bundle supplies the exact runner as `.zip`; nondeterministic validator execution is not claimed. |
 | Frontend TypeScript                       | Passed with `bunx tsc --noEmit`.                                                                                                                                              |
-| Frontend Vitest                           | **79 tests passed** across 10 files.                                                                                                                                          |
+| Frontend Vitest                           | **84 tests passed** across 11 files; local production configuration targets the verified replacement address.                                                                  |
 | Frontend ESLint                           | Passed with 0 errors and 15 existing Fast Refresh warnings.                                                                                                                   |
 | Frontend Prettier                         | Passed with `bunx prettier --check .`.                                                                                                                                        |
 | Frontend production build                 | Passed with `bun run build`; Vite/Nitro emitted advisory chunk-size and configuration warnings only.                                                                          |
 
 The contract tests cover fixed funding, campaign and proposal lifecycle rules, ordered challenge resolution, evidence validation, authorization, pagination, claims, refunds, and accounting reconciliation. Frontend tests cover adapter parsing, sender-scoped reads, wallet-associated agent metadata, route/ID handling, forms, and transaction refresh behavior.
 
-These results are not a claim that the complete reward and settlement lifecycle has been executed on Studio Next. No deployment or GEN transfer was performed for this repository publication. Live multi-validator finality, native transfer receipts, and production evidence provenance require separate Studio Next verification.
+These results are not a claim that the complete reward and settlement lifecycle has been executed on Studio Next. Read-only schema, source-byte, configuration, campaign-count, and accounting checks succeeded against the replacement address. No campaign funding or GEN transfer was performed. Live multi-validator finality, native transfer receipts, and production evidence provenance require separate Studio Next verification.
 
 ## Security and Limitations
 
 - `contracts/Veto.py` is the sole source of truth for VETO mechanics. The local frontend cannot authorize a transaction that the contract rejects.
 - VETO V1 has no platform fee, submission bond, submission fee, or campaign top-up operation.
 - Free agent registration does not provide person-level Sybil resistance; separate wallets can still represent one actor.
-- Netlify evidence is controlled, unauthenticated JSON. It demonstrates the contract's evidence path but is not independent real-world proof of a violation.
+- Netlify evidence is controlled, unauthenticated JSON. Objective reward authorization uses typed on-chain limits; semantic reward authorization additionally requires the configured authority record. The authority remains a trust root.
+- Full nondeterministic validator execution through the stock linter, live validator rounds, external ghost-transfer receipts, Vercel configuration, and migration remain unverified in this worktree. Exact local manager/executor execution and the replacement deployment's read-only state are evidence for the deterministic contract paths only, not a substitute for live validator or ghost verification.
 - A proposal's reward pool and payment escrow are separate; UI balances must not be interpreted as interchangeable.
 - Studio Next is a development network. This repository does not claim a mainnet deployment or an independent third-party security audit.
 - The contract exposes `get_agent(agent_id)`, but no global agent enumeration or direct wallet-to-agent lookup. The frontend's remembered ID is only a discovery hint and is revalidated on-chain.
-- The pinned runner's semantic validation and live validator/receipt testing remain environment-dependent as described in the test table.
+- The pinned runner is locally available through the current official manager bundle. The stock linter cannot consume its `.zip` layout, while the compatible manager/executor path can execute deterministic cases locally. Live validator behavior, ghost delivery and receipts remain environment-dependent.
 
 For a detailed source-level review, see [`docs/VETO_AUDIT.md`](docs/VETO_AUDIT.md). The exact interface and lifecycle notes are in [`docs/VETO_INTERFACE.md`](docs/VETO_INTERFACE.md).
 
@@ -313,7 +316,9 @@ veto/
 │   └── Veto.py
 ├── docs/
 │   ├── VETO_AUDIT.md
-│   └── VETO_INTERFACE.md
+│   ├── VETO_INTERFACE.md
+│   ├── VETO_REVIEWER_EVIDENCE.md
+│   └── VETO_V2_ARCHITECTURE.md
 ├── frontend/
 │   ├── src/
 │   ├── public/
