@@ -403,6 +403,9 @@ describe("ChallengeForm automatic agent selection", () => {
   });
 
   it("navigates to the verified finding after finalized submission", async () => {
+    mocks.wallet.connectedClient = {
+      getTransaction: vi.fn().mockResolvedValue({ result: 9 }),
+    };
     mocks.proposal = {
       id: "1",
       campaignId: "1",

@@ -32,7 +32,6 @@ import {
   getCampaign,
   getAgent,
   getAgentByWallet,
-  getAgentCampaignParticipation,
   getProposal,
   registerAgentWrite,
   simpleWrite,
@@ -114,6 +113,7 @@ function WriteRunner({
   onSubmitted,
   onAccepted,
   onFinalityError,
+  onPostFinalityError,
 }: {
   write: ContractWrite | null;
   label: string;
@@ -123,6 +123,7 @@ function WriteRunner({
   onSubmitted?: (txId: string, status: TrackedStatus) => void | Promise<void>;
   onAccepted?: (txId: string, status: TrackedStatus) => void | Promise<void>;
   onFinalityError?: (error: Error) => void;
+  onPostFinalityError?: (error: Error) => void;
 }) {
   const wallet = useWallet();
   if (!write || !wallet.kit || !wallet.connectedClient) return null;
@@ -137,6 +138,7 @@ function WriteRunner({
       {...(onSubmitted ? { onSubmitted } : {})}
       {...(onAccepted ? { onAccepted } : {})}
       {...(onFinalityError ? { onFinalityError } : {})}
+      {...(onPostFinalityError ? { onPostFinalityError } : {})}
       {...(onDismiss ? { onDismiss } : {})}
     />
   );
@@ -1047,7 +1049,6 @@ export function UpdateAgentForm({
 export function ChallengeForm({ proposalId }: { proposalId: string }) {
   const wallet = useWallet();
   const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const proposalQuery = useProposal(proposalId);
   const proposal = proposalQuery.data;
   const campaignQuery = useCampaign(proposal?.campaignId ?? "");
@@ -1064,6 +1065,9 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
   const [confirmed, setConfirmed] = useState(false);
   const [write, setWrite] = useState<ContractWrite | null>(null);
   const [txId, setTxId] = useState("");
+  const [finalizedSubmission, setFinalizedSubmission] = useState(false);
+  const [postFinalityError, setPostFinalityError] =
+    useState<ReturnType<typeof normalizeVetoError>>();
   const [challengeId, setChallengeId] = useState("");
   const challengeQuery = useChallenge(challengeId);
   const recordedChallenge = challengeQuery.data;
@@ -1101,6 +1105,22 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
     automaticAgentReadPending ||
     agentReadPending ||
     participationReadPending;
+  const eligibilityReadErrorKind = eligibilityReadError
+    ? normalizeVetoError(eligibilityReadError).kind
+    : undefined;
+  const eligibilityReadTitle =
+    eligibilityReadErrorKind === "rate_limited" || eligibilityReadErrorKind === "rpc_unavailable"
+      ? "Challenge eligibility is temporarily unavailable."
+      : "Challenge eligibility could not be read.";
+  const retryEligibilityRead = () => {
+    if (proposalQuery.isError) return void proposalQuery.refetch();
+    if (proposal && campaignQuery.isError) return void campaignQuery.refetch();
+    if (!manualAgentSelection && walletAgentQuery.isError) return void walletAgentQuery.refetch();
+    if (manualAgentSelection && agentIdIsValid && agentQuery.isError)
+      return void agentQuery.refetch();
+    if (agentIdIsValid && proposal?.campaignId && participationQuery.isError)
+      void participationQuery.refetch();
+  };
   const authorized = Boolean(
     wallet.address && agent && agent.active && agentControlsWallet(agent, wallet.address),
   );
@@ -1109,6 +1129,8 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
     setAgentId("");
     setError(undefined);
     setReview(undefined);
+    setFinalizedSubmission(false);
+    setPostFinalityError(undefined);
     setChallengeId("");
   }, [wallet.address, wallet.chainId, wallet.status]);
   useEffect(() => {
@@ -1130,6 +1152,8 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
     event.preventDefault();
     setError("");
     setTxId("");
+    setFinalizedSubmission(false);
+    setPostFinalityError(undefined);
     const form = new FormData(event.currentTarget);
     const url = evidenceUrl.trim();
     const allegation = String(form.get("allegation") ?? "").trim();
@@ -1364,20 +1388,11 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
           <ReadLoading message="Finding and verifying your registered agent…" />
         )}
         {!manualAgentSelection && wallet.address && walletAgentQuery.isError && (
-          <>
-            <ReadFailure
-              title="Automatic agent recognition is unavailable."
-              error={walletAgentQuery.error}
-              onRetry={() => {
-                void walletAgentQuery.refetch();
-              }}
-            />
-            <p className="text-sm mt-3">
-              <Link to="/agents" className="text-link">
-                Find or register an agent <ArrowUpRight />
-              </Link>
-            </p>
-          </>
+          <p className="text-sm mt-3">
+            <Link to="/agents" className="text-link">
+              Find or register an agent <ArrowUpRight />
+            </Link>
+          </p>
         )}
         {!manualAgentSelection && wallet.address && walletAgentQuery.data === null && (
           <>
@@ -1392,46 +1407,12 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
             </p>
           </>
         )}
-        {proposalReadPending && <ReadLoading message="Reading proposal eligibility…" />}
-        {proposalQuery.isError && (
+        {eligibilityReadPending && <ReadLoading message="Reading challenge eligibility…" />}
+        {Boolean(eligibilityReadError) && (
           <ReadFailure
-            title="Proposal eligibility could not be read."
-            error={proposalQuery.error}
-            onRetry={() => {
-              void proposalQuery.refetch();
-            }}
-          />
-        )}
-        {campaignReadPending && <ReadLoading message="Reading the campaign rules…" />}
-        {proposal && campaignQuery.isError && (
-          <ReadFailure
-            title="Campaign eligibility could not be read."
-            error={campaignQuery.error}
-            onRetry={() => {
-              void campaignQuery.refetch();
-            }}
-          />
-        )}
-        {agentIdIsValid && agentReadPending && <ReadLoading message="Reading registered agent…" />}
-        {agentIdIsValid && agentQuery.isError && (
-          <ReadFailure
-            title="Agent eligibility could not be read."
-            error={agentQuery.error}
-            onRetry={() => {
-              void agentQuery.refetch();
-            }}
-          />
-        )}
-        {agentIdIsValid && proposal?.campaignId && participationReadPending && (
-          <ReadLoading message="Checking campaign participation…" />
-        )}
-        {agentIdIsValid && proposal?.campaignId && participationQuery.isError && (
-          <ReadFailure
-            title="Campaign participation could not be read."
-            error={participationQuery.error}
-            onRetry={() => {
-              void participationQuery.refetch();
-            }}
+            title={eligibilityReadTitle}
+            error={eligibilityReadError}
+            onRetry={retryEligibilityRead}
           />
         )}
         {agent && agentIdIsValid && !agent.active && (
@@ -1510,7 +1491,11 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
         </Button>
         {review && (
           <section className="review" aria-live="polite">
-            <p className="eyebrow">CHALLENGE REVIEW · NOT SUBMITTED</p>
+            <p className="eyebrow">
+              {finalizedSubmission
+                ? "CHALLENGE SUBMISSION · FINALIZED"
+                : "CHALLENGE REVIEW · NOT SUBMITTED"}
+            </p>
             <h3 className="mt-4">{review.allegation}</h3>
             <p className="text-sm text-muted-foreground mb-6">{review.explanation}</p>
             <div className="review-warning">
@@ -1533,7 +1518,13 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
             </label>
             <Button
               type="button"
-              disabled={!confirmed || !eligible || !canWrite(wallet)}
+              disabled={
+                !confirmed ||
+                !eligible ||
+                !canWrite(wallet) ||
+                Boolean(write) ||
+                finalizedSubmission
+              }
               onClick={() =>
                 setWrite(
                   submitChallengeWrite(
@@ -1546,16 +1537,41 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
                 )
               }
             >
-              {eligibilityReadPending
-                ? "Reading eligibility…"
-                : eligibilityReadError
-                  ? "Eligibility unavailable"
-                  : canWrite(wallet) && eligible
-                    ? "Submit challenge"
-                    : "Challenge unavailable"}
+              {finalizedSubmission
+                ? "Challenge submitted"
+                : eligibilityReadPending
+                  ? "Reading eligibility…"
+                  : eligibilityReadError
+                    ? "Eligibility unavailable"
+                    : canWrite(wallet) && eligible
+                      ? "Submit challenge"
+                      : "Challenge unavailable"}
             </Button>
             {txId && (
-              <p className="text-xs text-muted-foreground mt-4">Submission finalized: {txId}</p>
+              <div className="detail-block mt-5" aria-live="polite">
+                <p className="eyebrow">CHALLENGE SUBMITTED SUCCESSFULLY</p>
+                <p>Transaction finalized on GenLayer. Challenge is awaiting evaluation.</p>
+                <p className="text-xs text-muted-foreground mt-2 break-all">{txId}</p>
+              </div>
+            )}
+            {postFinalityError && (
+              <ReadFailure
+                title="Challenge submitted; record refresh is temporarily unavailable."
+                error={postFinalityError}
+                onRetry={() => {
+                  if (!txId || !wallet.connectedClient) return;
+                  void getVetoTransaction(wallet.connectedClient, txId)
+                    .then((receipt) => {
+                      const recordedId = transactionResultId(receipt);
+                      if (!recordedId)
+                        throw new Error("The finalized challenge ID was not returned yet.");
+                      setPostFinalityError(undefined);
+                      setChallengeId(recordedId);
+                      return navigate({ to: "/finding/$id", params: { id: recordedId } });
+                    })
+                    .catch((reason) => setPostFinalityError(normalizeVetoError(reason)));
+                }}
+              />
             )}
             {recordedChallenge && (
               <div className="detail-block mt-5" aria-live="polite">
@@ -1607,44 +1623,49 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
               label="Submit challenge"
               onDone={async (id) => {
                 setTxId(id);
+                setFinalizedSubmission(true);
+                setPostFinalityError(undefined);
                 setWrite(null);
                 try {
-                  if (proposal) {
-                    const participation = await getAgentCampaignParticipation(
-                      agentId,
-                      proposal.campaignId,
-                    );
-                    const recordedId = participation.challengeId;
-                    setChallengeId(recordedId ?? "");
-                    if (recordedId) {
-                      await invalidateVetoQueries(
-                        queryClient,
-                        invalidationKeysForWrite(write, queryClient, {
-                          address: wallet.address,
-                          chainId: wallet.chainId,
-                        }),
-                      );
-                      await navigate({ to: "/finding/$id", params: { id: recordedId } });
-                      return;
-                    }
-                    setError(
-                      "The submission finalized, but its challenge ID was not returned by the contract. Open the proposal and refresh its findings.",
-                    );
-                  }
+                  if (!wallet.connectedClient)
+                    throw new Error("The connected client is unavailable.");
+                  const receipt = await getVetoTransaction(wallet.connectedClient, id);
+                  const recordedId = transactionResultId(receipt);
+                  if (!recordedId)
+                    throw new Error("The finalized challenge ID was not returned by the contract.");
+                  setChallengeId(recordedId);
+                  await navigate({ to: "/finding/$id", params: { id: recordedId } });
                 } catch (reason) {
-                  setError(reason);
+                  const normalized = normalizeVetoError(reason);
+                  setPostFinalityError(
+                    new VetoError(
+                      "Challenge submitted successfully, but the finalized challenge record is temporarily unavailable.",
+                      normalized.kind,
+                      normalized.technicalMessage,
+                      "Use Retry to look up the finalized challenge. Do not submit the challenge again.",
+                    ),
+                  );
                 }
-                void invalidateVetoQueries(
-                  queryClient,
-                  invalidationKeysForWrite(write, queryClient, {
-                    address: wallet.address,
-                    chainId: wallet.chainId,
-                  }),
-                );
               }}
               onError={(reason) => {
                 setError(reason);
+                setFinalizedSubmission(false);
+                setPostFinalityError(undefined);
                 setWrite(null);
+              }}
+              onPostFinalityError={(reason) => {
+                const normalized = normalizeVetoError(reason);
+                setFinalizedSubmission(true);
+                setPostFinalityError(
+                  new VetoError(
+                    normalized.kind === "rate_limited"
+                      ? "Challenge submitted successfully, but Studio Next is temporarily throttling the finalized record refresh."
+                      : "Challenge finalized, but the finalized record refresh is temporarily unavailable.",
+                    normalized.kind,
+                    normalized.technicalMessage,
+                    "Wait for the bounded retry or use Retry. Do not submit the challenge again.",
+                  ),
+                );
               }}
               onDismiss={() => setWrite(null)}
             />

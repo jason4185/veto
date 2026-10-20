@@ -35,6 +35,7 @@ export type PendingTransaction = {
 type Listener = {
   onStatus?: (status: TrackedStatus) => void;
   onFinalized?: (status: TrackedStatus) => void;
+  onPostFinalityError?: (error: Error) => void;
   onError?: (error: Error) => void;
 };
 
@@ -193,9 +194,24 @@ async function monitor(id: `0x${string}`, kit: TransactionKit, client: GenLayerC
       { until: "finalized" },
     );
     latest = terminal;
-    const transaction = await getVetoTransaction(client, id);
     if (terminal.phase !== "finalized" || terminal.statusName !== "FINALIZED") {
       throw new Error("GenLayer returned an unfinalized terminal status.");
+    }
+    let transaction: Awaited<ReturnType<typeof getVetoTransaction>>;
+    try {
+      transaction = await getVetoTransaction(client, id);
+    } catch (reason) {
+      // FINALIZED is authoritative for lifecycle. A receipt/state read can still be
+      // temporarily unavailable, especially while Studio Next is rate limiting reads.
+      // Keep the record so the bounded monitor retry can recover it without asking the
+      // user to submit the write again.
+      if (terminal.successful !== false && terminal.executionResultName !== "FINISHED_WITH_ERROR") {
+        const error = reason instanceof Error ? reason : new Error(String(reason));
+        notifyTransaction(id, "onPostFinalityError", error);
+        if (isRpcRateLimitError(reason)) scheduleRateLimitedRetry(id, kit, client, reason);
+        return;
+      }
+      throw reason;
     }
     if (!isSuccessful(transaction)) {
       throw new Error(
@@ -331,21 +347,6 @@ export function PendingTransactionMonitor() {
     if (!wallet.kit || !wallet.connectedClient) return;
     const cleanups = recordsRef.current.map((record) =>
       watchPendingTransaction(record, wallet.kit!, wallet.connectedClient!, {
-        onStatus: (status) => {
-          if (
-            status.phase === "decided" &&
-            status.statusName === "ACCEPTED" &&
-            status.successful === true &&
-            status.executionResultName === "FINISHED_WITH_RETURN"
-          )
-            void invalidateVetoQueries(
-              queryClient,
-              invalidationKeysForWrite(pendingWrite(record), queryClient, {
-                address: record.scope.sender,
-                chainId: record.scope.chainId,
-              }),
-            );
-        },
         onFinalized: () => {
           void invalidateVetoQueries(
             queryClient,
@@ -353,6 +354,7 @@ export function PendingTransactionMonitor() {
               address: record.scope.sender,
               chainId: record.scope.chainId,
             }),
+            record.method === "submit_challenge" ? { refetchType: "none" } : undefined,
           );
         },
       }),

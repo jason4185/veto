@@ -187,11 +187,18 @@ export function invalidationKeysForWrite(
   }
 }
 
-export async function invalidateVetoQueries(queryClient: QueryClient, keys: QueryKey[]) {
+export async function invalidateVetoQueries(
+  queryClient: QueryClient,
+  keys: QueryKey[],
+  options?: { refetchType?: "active" | "none" | "all" },
+) {
   const unique = new Map(keys.map((key) => [JSON.stringify(key), key]));
   await Promise.all(
     [...unique.values()].map((queryKey) =>
-      queryClient.invalidateQueries({ queryKey, refetchType: "active" }),
+      queryClient.invalidateQueries({
+        queryKey,
+        refetchType: options?.refetchType ?? "active",
+      }),
     ),
   );
 }

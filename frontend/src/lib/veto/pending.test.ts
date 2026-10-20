@@ -136,4 +136,37 @@ describe("background transaction finality monitoring", () => {
     expect(onFinalized).not.toHaveBeenCalled();
     expect(readPendingTransactions()).toHaveLength(0);
   });
+
+  it("keeps a finalized write tracked when the receipt read is rate limited", async () => {
+    const final = status({
+      phase: "finalized",
+      statusName: "FINALIZED",
+      executionResultName: "FINISHED_WITH_RETURN",
+      successful: true,
+    });
+    const onPostFinalityError = vi.fn();
+    const onFinalized = vi.fn();
+    const onError = vi.fn();
+    rememberPendingTransaction(id, "submit_challenge", status({ phase: "decided" }));
+    const kit = {
+      track: vi.fn(async (_txId, onUpdate) => {
+        onUpdate(final);
+        return final;
+      }),
+    } as unknown as TransactionKit;
+    const stop = watchPendingTransaction(
+      readPendingTransactions()[0]!,
+      kit,
+      {
+        getTransaction: vi.fn().mockRejectedValue(new Error("429 rate limit exceeded")),
+      } as never,
+      { onPostFinalityError, onFinalized, onError },
+    );
+
+    await vi.waitFor(() => expect(onPostFinalityError).toHaveBeenCalledWith(expect.any(Error)));
+    expect(onFinalized).not.toHaveBeenCalled();
+    expect(onError).not.toHaveBeenCalled();
+    expect(readPendingTransactions()).toHaveLength(1);
+    stop();
+  });
 });

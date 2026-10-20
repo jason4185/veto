@@ -293,6 +293,7 @@ export function TransactionRunner({
   onAccepted,
   onSubmitted,
   onFinalityError,
+  onPostFinalityError,
   label = "Continue",
 }: {
   kit: TransactionKit;
@@ -304,6 +305,7 @@ export function TransactionRunner({
   onAccepted?: (txId: string, status: TrackedStatus) => void | Promise<void>;
   onSubmitted?: (txId: string, status: TrackedStatus) => void | Promise<void>;
   onFinalityError?: (error: Error) => void;
+  onPostFinalityError?: (error: Error) => void;
   label?: string;
 }) {
   const argsKey = write.args.map(String).join("|");
@@ -335,6 +337,8 @@ export function TransactionRunner({
   const [acceptedStatus, setAcceptedStatus] = useState<TrackedStatus>();
   const [backgroundStatus, setBackgroundStatus] = useState<TrackedStatus>();
   const [finalityError, setFinalityError] = useState<ReturnType<typeof normalizeVetoError>>();
+  const [postFinalityError, setPostFinalityError] =
+    useState<ReturnType<typeof normalizeVetoError>>();
   const state = flow.state;
 
   useEffect(() => {
@@ -383,10 +387,16 @@ export function TransactionRunner({
       onFinalized: (status) => {
         if (finalizedHandled.current === id) return;
         finalizedHandled.current = id;
+        setPostFinalityError(undefined);
         setBackgroundStatus(status);
         void Promise.resolve(onSuccess(id)).catch((reason) =>
           setFinalityError(normalizeVetoError(reason)),
         );
+      },
+      onPostFinalityError: (reason) => {
+        const error = normalizeVetoError(reason);
+        setPostFinalityError(error);
+        onPostFinalityError?.(error);
       },
       onError: (reason) => {
         const error = normalizeVetoError(reason);
@@ -398,6 +408,7 @@ export function TransactionRunner({
     acceptedStatus,
     client,
     onFinalityError,
+    onPostFinalityError,
     onSuccess,
     transactionKit,
     write.args,
@@ -558,16 +569,22 @@ export function TransactionRunner({
                 <p className="gltk-outcome-title">
                   {finalityError
                     ? "Finality needs attention"
-                    : finalityInProgress
-                      ? "Finality is still in progress"
-                      : "Accepted — awaiting finality"}
+                    : postFinalityError
+                      ? "Transaction finalized — details temporarily unavailable"
+                      : finalityInProgress
+                        ? "Finality is still in progress"
+                        : "Accepted — awaiting finality"}
                 </p>
                 <p className="gltk-outcome-detail">
                   {finalityError
                     ? finalityError.message
-                    : finalityInProgress
-                      ? `GenLayer is continuing consensus (${monitorStatus?.statusName ?? "processing"}). The accepted result remains provisional.`
-                      : "Your transaction has been accepted by GenLayer. You can continue using VETO while finalization completes in the background."}
+                    : postFinalityError
+                      ? postFinalityError.kind === "rate_limited"
+                        ? "GenLayer finalized this transaction. Studio Next is temporarily throttling the receipt or record refresh; VETO will retry in the background. Do not submit the transaction again."
+                        : "GenLayer reported FINALIZED, but the receipt or record refresh is temporarily unavailable. Use the affected record’s retry action and do not submit the transaction again."
+                      : finalityInProgress
+                        ? `GenLayer is continuing consensus (${monitorStatus?.statusName ?? "processing"}). The accepted result remains provisional.`
+                        : "Your transaction has been accepted by GenLayer. You can continue using VETO while finalization completes in the background."}
                 </p>
               </div>
               <div className="gltk-link-row">
@@ -586,11 +603,11 @@ export function TransactionRunner({
                 with successful execution; external GEN delivery still requires chain-layer
                 verification.
               </p>
-              {finalityError?.technicalMessage && (
+              {(finalityError?.technicalMessage || postFinalityError?.technicalMessage) && (
                 <details className="text-xs">
                   <summary>Technical details</summary>
                   <code className="mt-2 block break-words whitespace-pre-wrap">
-                    {finalityError.technicalMessage}
+                    {(finalityError ?? postFinalityError)?.technicalMessage}
                   </code>
                 </details>
               )}
