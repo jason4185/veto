@@ -488,6 +488,27 @@ def test_owner_and_operator_roles_share_one_identity_reservation():
         contract.update_agent(second, "two", "profile", owner_a.as_hex, "", True)
 
 
+def test_wallet_lookup_returns_only_current_owner_or_operator():
+    _m, contract, A, sender, _value, _t, _e, _l, _x, _creator, _recipient, _campaign = setup_campaign(2, 2)
+    owner = A("0x" + "22" * 20)
+    operator = A("0x" + "33" * 20)
+    replacement = A("0x" + "44" * 20)
+    payout = A("0x" + "55" * 20)
+    sender(owner)
+    agent = contract.register_agent("one", "profile", operator.as_hex, payout.as_hex)
+    assert contract.get_agent_by_wallet(owner.as_hex) == agent
+    assert contract.get_agent_by_wallet(operator.as_hex) == agent
+    assert contract.get_agent_by_wallet(payout.as_hex) == 0
+    assert contract.get_agent_by_wallet(A("0x" + "66" * 20).as_hex) == 0
+    with pytest.raises(RuntimeError):
+        contract.get_agent_by_wallet("not-an-address")
+
+    contract.update_agent(agent, "one", "profile", replacement.as_hex, payout.as_hex, False)
+    assert contract.get_agent_by_wallet(operator.as_hex) == 0
+    assert contract.get_agent_by_wallet(replacement.as_hex) == agent
+    assert contract.get_agent(agent)["active"] is False
+
+
 def test_failed_transfer_attempt_does_not_consume_state_and_retry_is_single_use():
     m, contract, _A, sender, value, time_at, _evidence, _llm, transfers, creator, recipient, campaign = setup_campaign(1, 2, 3600)
     proposal = add_proposal(contract, sender, value, campaign, recipient, 3)

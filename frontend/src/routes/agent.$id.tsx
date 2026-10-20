@@ -22,7 +22,7 @@ import {
   normalizeContractId,
   shortAddress,
 } from "@/lib/veto/domain";
-import { claimRewardWrite } from "@/lib/veto/contract";
+import { claimRewardWrite, getAgent } from "@/lib/veto/contract";
 import {
   useAgent,
   useAgentCampaignClaimable,
@@ -32,7 +32,7 @@ import {
 import { useWallet } from "@/lib/veto/wallet";
 import { pageHead } from "@/lib/veto/metadata";
 import { normalizeVetoError } from "@/lib/veto/errors";
-import { readKnownAgentId, rememberKnownAgentId } from "@/lib/veto/agent-memory";
+import { readKnownAgentId, rememberVerifiedAgent } from "@/lib/veto/agent-memory";
 
 export const Route = createFileRoute("/agent/$id")({
   head: () =>
@@ -110,6 +110,7 @@ function AgentPage() {
   const walletAgentQuery = useWalletAgent(wallet.address, wallet.chainId);
   const walletAgent = walletAgentQuery.data?.agent;
   const [remembered, setRemembered] = useState(false);
+  const [rememberError, setRememberError] = useState<unknown>();
   useEffect(() => {
     setRemembered(
       Boolean(
@@ -247,7 +248,27 @@ function AgentPage() {
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => setRemembered(rememberKnownAgentId(wallet.address, id))}
+                onClick={async () => {
+                  setRememberError(undefined);
+                  try {
+                    const verifiedAgent = await getAgent(id);
+                    if (!wallet.address || !agentControlsWallet(verifiedAgent, wallet.address)) {
+                      throw new Error(
+                        "The connected wallet is not the live owner or operator of this agent.",
+                      );
+                    }
+                    if (!rememberVerifiedAgent(verifiedAgent, id)) {
+                      throw new Error(
+                        "This browser could not save the verified agent association.",
+                      );
+                    }
+                    setRemembered(true);
+                    void walletAgentQuery.refetch();
+                  } catch (reason) {
+                    setRememberError(reason);
+                    setRemembered(false);
+                  }
+                }}
               >
                 {remembered ? "Saved as My Agent" : "Remember as My Agent"}
               </Button>
@@ -256,6 +277,7 @@ function AgentPage() {
         }
       />
       <ConnectionNotice />
+      {Boolean(rememberError) && <VetoErrorNotice error={rememberError} />}
       {wallet.address && walletAgentQuery.isPending && !walletAgent && (
         <ReadLoading message="Checking whether this is your verified agent…" />
       )}

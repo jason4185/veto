@@ -16,7 +16,7 @@ import {
 import { FundedProposalForm } from "@/components/veto/forms";
 import { campaignLabel, connectionState, formatGen, integrationMessage } from "@/lib/veto/domain";
 import { simpleWrite } from "@/lib/veto/contract";
-import { useAccounting, useMyCampaigns } from "@/lib/veto/hooks";
+import { useAccounting, useMyCampaigns, useWalletAgent } from "@/lib/veto/hooks";
 import { useWallet } from "@/lib/veto/wallet";
 import { usePendingTransactions } from "@/lib/veto/pending";
 import { pageHead } from "@/lib/veto/metadata";
@@ -36,6 +36,7 @@ function Dashboard() {
   const wallet = useWallet();
   const campaignsQuery = useMyCampaigns(page * 50, 50, wallet.address, wallet.connectedClient);
   const accountingQuery = useAccounting();
+  const walletAgentQuery = useWalletAgent(wallet.address, wallet.chainId);
   const pendingTransactions = usePendingTransactions();
   const campaigns = campaignsQuery.data?.items ?? [];
   const campaignCreationPending = pendingTransactions.some(
@@ -111,6 +112,21 @@ function Dashboard() {
       <div className="mt-6">
         <ConnectionNotice />
       </div>
+      {walletAgentQuery.data?.agent && (
+        <div className="detail-block mt-6">
+          <p className="eyebrow">MY AGENT · VERIFIED ONCHAIN</p>
+          <h3>{walletAgentQuery.data.agent.name}</h3>
+          <p>
+            This wallet matches the live owner or operator record for Agent #
+            {walletAgentQuery.data.agent.id}.
+          </p>
+          <Button asChild variant="outline" className="mt-4">
+            <Link to="/agent/$id" params={{ id: walletAgentQuery.data.agent.id }}>
+              Open My Agent <ArrowUpRight />
+            </Link>
+          </Button>
+        </div>
+      )}
       <div className="detail-tabs">
         {["Campaigns", "Funded proposals", "Settlement"].map((tabName) => (
           <Button

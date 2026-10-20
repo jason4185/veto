@@ -8,9 +8,9 @@ from genlayer.storage import TreeMap,allow
 MAX_U256=(1<<256)-1
 MAX_PAGE_SIZE=50
 MAX_POLICIES=8
-MAX_CHALLENGES_PER_PROPOSAL=32
-MAX_EVALUATION_ATTEMPTS=2
-MAX_CAMPAIGN_AGENTS=1000
+MAX_CHALLENGES=32
+MAX_ATTEMPTS=2
+MAX_AGENTS=1000
 MIN_CAMPAIGN_DURATION=u256(60*60)
 MAX_CAMPAIGN_DURATION=u256(30*24*60*60)
 EVALUATION_GRACE=u256(24*60*60)
@@ -23,10 +23,10 @@ MAX_PROPOSAL_DESCRIPTION=4000
 MAX_ALLEGATION=1000
 MAX_EXPLANATION=3000
 MAX_URL=500
-MAX_EVIDENCE_BYTES=4096
-MAX_EVIDENCE_STATEMENT=2000
-MAX_PROMPT_BYTES=30000
-MAX_MODEL_OUTPUT_BYTES=512
+MAX_EVIDENCE=4096
+MAX_STATEMENT=2000
+MAX_PROMPT=30000
+MAX_OUTPUT=512
 MAX_PAY_PREFIX="MAX_PAYMENT_WEI:"
 ACTIVE="ACTIVE"
 CLOSED="CLOSED"
@@ -43,7 +43,6 @@ ESCROW_LOCKED="LOCKED"
 ESCROW_PAID="PAID"
 ESCROW_REFUNDABLE="REFUNDABLE"
 ESCROW_REFUNDED="REFUNDED"
-E_OK="OK"
 ZERO_ADDRESS=Address(b"\x00"*20)
 @allow
 @dataclass
@@ -287,7 +286,7 @@ def _json_object(pairs):
 def _valid_model_result(raw):
     result={"decision":INCONCLUSIVE,"policy_match":False,"evidence_sufficient":False,"policy_index":0}
     if isinstance(raw,str):
-        if _bytes_len(raw)>MAX_MODEL_OUTPUT_BYTES:
+        if _bytes_len(raw)>MAX_OUTPUT:
             return result
         try:
             raw=json.loads(raw,object_pairs_hook=_json_object)
@@ -319,7 +318,7 @@ def _fetch_evidence(url,campaign_id,proposal_id,policy_index):
             return fail("REDIRECT_REJECTED")
         if not isinstance(status,int)or status<200 or status>=300:
             return fail("HTTP_"+str(status))
-        if not isinstance(body,(bytes,bytearray))or len(body)==0 or len(body)>MAX_EVIDENCE_BYTES:
+        if not isinstance(body,(bytes,bytearray))or len(body)==0 or len(body)>MAX_EVIDENCE:
             return fail("INVALID_BODY")
         raw=bytes(body)
         digest=hashlib.sha256(raw).hexdigest()
@@ -336,11 +335,11 @@ def _fetch_evidence(url,campaign_id,proposal_id,policy_index):
         if type(record["policy_index"])is not int or type(record["violation"])is not bool:
             return fail("INVALID_FORMAT")
         for field in("facts","statement"):
-            if type(record[field])is not str or not record[field].strip()or _bytes_len(record[field])>MAX_EVIDENCE_STATEMENT:
+            if type(record[field])is not str or not record[field].strip()or _bytes_len(record[field])>MAX_STATEMENT:
                 return fail("INVALID_FORMAT")
         if record["campaign_id"]!=int(campaign_id)or record["proposal_id"]!=int(proposal_id)or record["policy_index"]!=int(policy_index):
             return fail("CONTEXT_MISMATCH")
-        result["status"]=E_OK
+        result["status"]="OK"
         result["sha256"]=digest
         result["body"]=text
         result["record_violation"]=record["violation"]
@@ -367,7 +366,7 @@ def _evaluation_prompt(snapshot,fetched):
         "(boolean), evidence_sufficient (boolean), and policy_index (integer). For VALID, policy_match and "
         "evidence_sufficient must both be true and policy_index must be the applicable policy index.\nBEGIN_VETO_DATA\n"+data+"\nEND_VETO_DATA"
     )
-    if _bytes_len(prompt)>MAX_PROMPT_BYTES:
+    if _bytes_len(prompt)>MAX_PROMPT:
         return ""
     return prompt
 def _semantic_proposal(snapshot):
@@ -375,7 +374,7 @@ def _semantic_proposal(snapshot):
     proposal_id=snapshot[1]
     policy_index=snapshot[2]
     fetched=_fetch_evidence(snapshot[9],campaign_id,proposal_id,policy_index)
-    if fetched["status"]!=E_OK:
+    if fetched["status"]!="OK":
         return _semantic_failure(fetched,fetched["status"])
     prompt=_evaluation_prompt(snapshot[:9],fetched)
     if prompt=="":
@@ -532,7 +531,7 @@ class Veto(gl.contract.Contract):
         campaign.open_proposal_count=_sub(campaign.open_proposal_count,u256(1))
         self.challenges[challenge_id]=challenge
         self.agents[challenge.agent_id]=agent
-        for index in range(min(int(proposal.challenge_count),MAX_CHALLENGES_PER_PROPOSAL)):
+        for index in range(min(int(proposal.challenge_count),MAX_CHALLENGES)):
             later_id=self.proposal_challenge_by_index[_key(proposal_id,u256(index))]
             if later_id==challenge_id:
                 continue
@@ -602,7 +601,7 @@ class Veto(gl.contract.Contract):
         name=_single_line(name,"campaign name",MAX_NAME)
         description=_text(description,"campaign description",MAX_DESCRIPTION)
         parsed_policies=_parse_policies(policies)
-        if max_agents==0 or max_agents>u256(MAX_CAMPAIGN_AGENTS)or reward_per_accepted_agent==0:
+        if max_agents==0 or max_agents>u256(MAX_AGENTS)or reward_per_accepted_agent==0:
             _error("bad cap or reward")
         if duration_seconds<MIN_CAMPAIGN_DURATION or duration_seconds>MAX_CAMPAIGN_DURATION:
             _error("bad campaign duration")
@@ -683,7 +682,7 @@ class Veto(gl.contract.Contract):
         if not agent.active:
             _error("agent inactive")
         self._actor(agent)
-        if proposal.challenge_count>=u256(MAX_CHALLENGES_PER_PROPOSAL):
+        if proposal.challenge_count>=u256(MAX_CHALLENGES):
             _error("challenge cap reached")
         duplicate_key=_key(proposal.campaign_id,agent_id)
         if duplicate_key in self.campaign_agent_challenge:
@@ -732,7 +731,7 @@ class Veto(gl.contract.Contract):
             _error("bad proposal state")
         if now>_add(challenge.submitted_at,EVALUATION_GRACE):
             _error("evaluation grace expired")
-        if challenge.status not in(PENDING,INCONCLUSIVE)or challenge.attempts>=u256(MAX_EVALUATION_ATTEMPTS):
+        if challenge.status not in(PENDING,INCONCLUSIVE)or challenge.attempts>=u256(MAX_ATTEMPTS):
             _error("challenge is not retryable")
         policy=self._policy(proposal.campaign_id,campaign,proposal.policy_index)
         limit=self.policy_limits.get(_key(proposal.campaign_id,proposal.policy_index-u256(1)),u256(0))
@@ -753,7 +752,7 @@ class Veto(gl.contract.Contract):
         evidence_sufficient=result["evidence_sufficient"]
         result_policy_index=result["policy_index"]
         trusted=limit!=0
-        if limit==0 and result["evidence_status"]==E_OK and self._attested(proposal.campaign_id,challenge.proposal_id,proposal.policy_index,result["evidence_sha256"],proposal,policy,limit):
+        if limit==0 and result["evidence_status"]=="OK" and self._attested(proposal.campaign_id,challenge.proposal_id,proposal.policy_index,result["evidence_sha256"],proposal,policy,limit):
             trusted=True
             result["evidence_status"]="AUTHENTICATED"
         if decision==VALID and not trusted:
@@ -767,7 +766,7 @@ class Veto(gl.contract.Contract):
         challenge.evidence_status=result["evidence_status"]
         challenge.evidence_sha256=result["evidence_sha256"]
         challenge.evaluated_at=now
-        if decision==INVALID or(decision==INCONCLUSIVE and challenge.attempts>=u256(MAX_EVALUATION_ATTEMPTS)):
+        if decision==INVALID or(decision==INCONCLUSIVE and challenge.attempts>=u256(MAX_ATTEMPTS)):
             self._release_challenge_reward(campaign,challenge)
         self.challenges[challenge_id]=challenge
         self.campaigns[proposal.campaign_id]=campaign
@@ -788,7 +787,7 @@ class Veto(gl.contract.Contract):
         if challenge.status==VALID:
             self._finish_vetoed(proposal_id,challenge_id,proposal,campaign,challenge,now)
             return
-        if challenge.status==PENDING or(challenge.status==INCONCLUSIVE and challenge.attempts<u256(MAX_EVALUATION_ATTEMPTS)):
+        if challenge.status==PENDING or(challenge.status==INCONCLUSIVE and challenge.attempts<u256(MAX_ATTEMPTS)):
             if now>_add(challenge.submitted_at,EVALUATION_GRACE):
                 challenge.status=EXPIRED
                 self._release_challenge_reward(campaign,challenge)
@@ -879,13 +878,16 @@ class Veto(gl.contract.Contract):
         self.total_reward_refunded=_add(self.total_reward_refunded,amount)
     @gl.public.view
     def get_config(self)->dict:
-        return{"protocol":"VETO V1","min_duration":int(MIN_CAMPAIGN_DURATION),"max_duration":int(MAX_CAMPAIGN_DURATION),"max_agents":MAX_CAMPAIGN_AGENTS,"grace":int(EVALUATION_GRACE),"evidence_authority":self.authority.as_hex,"typed_policy_prefix":MAX_PAY_PREFIX}
+        return{"protocol":"VETO V1","min_duration":int(MIN_CAMPAIGN_DURATION),"max_duration":int(MAX_CAMPAIGN_DURATION),"max_agents":MAX_AGENTS,"grace":int(EVALUATION_GRACE),"evidence_authority":self.authority.as_hex,"typed_policy_prefix":MAX_PAY_PREFIX}
     @gl.public.view
     def get_campaign_count(self)->u256:
         return self.campaign_count
     @gl.public.view
     def get_agent(self,agent_id:u256)->dict:
         return self._agent_view(agent_id,self._agent(agent_id))
+    @gl.public.view
+    def get_agent_by_wallet(self,wallet_address:str)->u256:
+        w=_address(wallet_address,"wallet");i=self.identity_agent_id.get(w.as_hex,u256(0));a=self.agents.get(i);return i if a and w in(a.owner,a.operator) else u256(0)
     @gl.public.view
     def get_agent_campaign_claimable(self,agent_id:u256,campaign_id:u256)->u256:
         self._agent(agent_id)
@@ -970,9 +972,9 @@ class Veto(gl.contract.Contract):
     def get_pending_challenge_count(self,proposal_id:u256)->u256:
         proposal=self._proposal(proposal_id)
         pending=u256(0)
-        for index in range(min(int(proposal.challenge_count),MAX_CHALLENGES_PER_PROPOSAL)):
+        for index in range(min(int(proposal.challenge_count),MAX_CHALLENGES)):
             challenge=self._challenge(self.proposal_challenge_by_index[_key(proposal_id,u256(index))])
-            if challenge.status==PENDING or(challenge.status==INCONCLUSIVE and challenge.attempts<u256(MAX_EVALUATION_ATTEMPTS)):
+            if challenge.status==PENDING or(challenge.status==INCONCLUSIVE and challenge.attempts<u256(MAX_ATTEMPTS)):
                 pending=_next_id(pending)
         return pending
     @gl.public.view

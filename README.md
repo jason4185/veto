@@ -2,7 +2,7 @@
 
 VETO is a GenLayer-powered governance security platform for scrutinizing treasury proposals before funds move. Creators launch GEN-funded campaigns, define governance policies, and publish spending proposals. Registered agents investigate those proposals and submit evidence when they identify a possible policy violation. GenLayer evaluates the evidence against the applicable policy; the first eligible valid challenge in proposal order can veto the payment and make a GEN reward claimable.
 
-The repository contains the corrected VETO GenLayer contract, its host-emulation and static tests, and a Lovable-designed TanStack frontend. The `netlify-evidence/` directory is reserved for controlled evidence fixtures. The corrected source is deployed at the replacement Studio Next address below; the historical deployment remains unchanged.
+The repository contains the corrected VETO GenLayer contract, its host-emulation and static tests, and a Lovable-designed TanStack frontend. The `netlify-evidence/` directory is reserved for controlled evidence fixtures. The corrected source is prepared for manual Studio Next deployment; the current deployment and historical deployment remain unchanged.
 
 ## Overview
 
@@ -157,6 +157,7 @@ The authoritative implementation is [`contracts/Veto.py`](contracts/Veto.py). Th
 | `get_config()`                                            | Contract limits and lifecycle configuration.                                             |
 | `get_campaign_count()`                                    | Total campaign count.                                                                    |
 | `get_agent(agent_id)`                                     | One agent profile and accounting summary by ID.                                          |
+| `get_agent_by_wallet(wallet_address)`                     | Returns the current owner/operator agent ID, or `0` when the wallet is not currently authorized. |
 | `get_agent_campaign_claimable(agent_id, campaign_id)`     | Campaign-scoped claimable reward for an agent.                                           |
 | `get_campaign(campaign_id)`                               | Campaign state, limits, deadline, participation, reward accounting, and proposal counts. |
 | `get_campaign_policies(campaign_id, offset, limit)`       | Paginated campaign policy text.                                                          |
@@ -171,7 +172,7 @@ The authoritative implementation is [`contracts/Veto.py`](contracts/Veto.py). Th
 | `get_pending_challenge_count(proposal_id)`                | Number of pending challenges for a proposal.                                             |
 | `get_global_accounting()`                                 | Global reward and escrow accounting counters.                                            |
 
-All paginated reads use bounded offset/limit inputs with a maximum page size of 50. VETO exposes lookup by agent ID, not a global agent directory or a direct wallet-to-agent lookup.
+All paginated reads use bounded offset/limit inputs with a maximum page size of 50. `get_agent_by_wallet` uses the shared owner/operator reservation map and verifies the live agent record; it does not treat payout addresses, retired operators, or stale mappings as current ownership. It is a direct lookup, not a global agent enumeration.
 
 ## Architecture
 
@@ -213,13 +214,13 @@ The current deployment target is GenLayer Studio Next, not GenLayer mainnet.
 | Network                 | GenLayer Studio Next                                                                                                                        |
 | Chain ID                | `61997`                                                                                                                                     |
 | RPC                     | `https://studio-next.genlayer.com/api`                                                                                                      |
-| Corrected contract      | [`0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4`](https://explorer-studio-dev.genlayer.com/address/0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4) |
+| Current deployed contract | [`0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4`](https://explorer-studio-dev.genlayer.com/address/0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4) |
 | Historical contract     | [`0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8`](https://explorer-studio-dev.genlayer.com/address/0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8) |
 | Explorer                | [GenLayer Studio Explorer](https://explorer-studio-dev.genlayer.com/)                                                                       |
-| Current local source size    | 51,948 UTF-8 bytes                                                                                                                       |
-| Current local source SHA-256 | `04b8faac2167ad24185f267509ee27ff5013c2c22c74707dff466a0cb26132aa`                                                                     |
+| Local source size             | 51,986 UTF-8 bytes                                                                                                                       |
+| Local source SHA-256          | `6041e7b033e9ab619e784412fce3becc9ce1214e850d09375ee3aca784b3016d`                                                                     |
 
-The deployed source retrieved from the corrected address is 51,948 bytes and matches the local `contracts/Veto.py` SHA-256 exactly. The historical address was not modified and has separate state. No campaign funding or GEN transfer was performed during this verification.
+The local source is a prepared, not-yet-deployed revision. The current deployed address predates `get_agent_by_wallet` and must be replaced manually before cross-device on-chain wallet recognition is available; the frontend remains compatible with it through a bounded, live-verified remembered-ID fallback. The historical address was not modified and has separate state. No campaign funding or GEN transfer was performed during this verification.
 
 ## Running Locally
 
@@ -272,7 +273,7 @@ The Lovable-designed frontend is a TanStack file-based application. Its current 
 
 The normal agent path is `Agents → verified agent → Explore campaigns → campaign proposal → Challenge proposal`. The creator path is `Dashboard → campaign → funded proposal → challenges → ordered resolution → execution/refund/closure`. Public reads remain available when the wallet is disconnected; transaction controls require a connected, correctly configured wallet and contract.
 
-The frontend can remember an agent ID as wallet-associated navigation metadata, but it verifies that ID with `get_agent` and compares owner/operator addresses before presenting it as the connected wallet's agent. The contract remains the authority for identity, participation, eligibility, rewards, and settlement.
+The frontend first calls `get_agent_by_wallet` for the connected wallet and then verifies the returned record with `get_agent`. A remembered wallet-scoped ID is retained only as a compatibility fallback while the currently deployed older contract does not expose the new view; it is never treated as proof and is revalidated against the live owner/operator fields. No transaction-history or sequential-ID scan is used. The contract remains the authority for identity, participation, eligibility, rewards, and settlement.
 
 ## Testing and Verification
 
@@ -281,18 +282,18 @@ The repository was checked locally before publication:
 | Check                                     | Result                                                                                                                                                                        |
 | ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Python compilation of `contracts/Veto.py` | Passed.                                                                                                                                                                       |
-| Contract host-emulation/static suite      | **38 passed** with `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q`.                                                                                                   |
+| Contract host-emulation/static suite      | **39 passed** with `/private/tmp/veto-py312/bin/python -m pytest -q`.                                                                                                            |
 | GenVM AST lint                            | Passed.                                                                                                                                                                       |
 | GenVM validation                         | Exact v0.6.0-rc6 manager/executor ran initialization, typed objective evaluations, invalid constraints, authority/context gates, cross-role identity rejection, and external-message emission. Stock `genvm-lint check` remains blocked by `E101` because it expects a `.tar` runner member while the official bundle supplies the exact runner as `.zip`; nondeterministic validator execution is not claimed. |
 | Frontend TypeScript                       | Passed with `bunx tsc --noEmit`.                                                                                                                                              |
-| Frontend Vitest                           | **84 tests passed** across 11 files; local production configuration targets the verified replacement address.                                                                  |
+| Frontend Vitest                           | **90 tests passed** across 11 files; local configuration retains the current deployment until a manual replacement is supplied.                                               |
 | Frontend ESLint                           | Passed with 0 errors and 15 existing Fast Refresh warnings.                                                                                                                   |
 | Frontend Prettier                         | Passed with `bunx prettier --check .`.                                                                                                                                        |
 | Frontend production build                 | Passed with `bun run build`; Vite/Nitro emitted advisory chunk-size and configuration warnings only.                                                                          |
 
 The contract tests cover fixed funding, campaign and proposal lifecycle rules, ordered challenge resolution, evidence validation, authorization, pagination, claims, refunds, and accounting reconciliation. Frontend tests cover adapter parsing, sender-scoped reads, wallet-associated agent metadata, route/ID handling, forms, and transaction refresh behavior.
 
-These results are not a claim that the complete reward and settlement lifecycle has been executed on Studio Next. Read-only schema, source-byte, configuration, campaign-count, and accounting checks succeeded against the replacement address. No campaign funding or GEN transfer was performed. Live multi-validator finality, native transfer receipts, and production evidence provenance require separate Studio Next verification.
+These results are not a claim that the complete reward and settlement lifecycle has been executed on Studio Next. The new wallet view is validated locally but has not been deployed. No campaign funding or GEN transfer was performed. Live multi-validator finality, native transfer receipts, and production evidence provenance require separate Studio Next verification.
 
 ## Security and Limitations
 
@@ -300,10 +301,10 @@ These results are not a claim that the complete reward and settlement lifecycle 
 - VETO V1 has no platform fee, submission bond, submission fee, or campaign top-up operation.
 - Free agent registration does not provide person-level Sybil resistance; separate wallets can still represent one actor.
 - Netlify evidence is controlled, unauthenticated JSON. Objective reward authorization uses typed on-chain limits; semantic reward authorization additionally requires the configured authority record. The authority remains a trust root.
-- Full nondeterministic validator execution through the stock linter, live validator rounds, external ghost-transfer receipts, Vercel configuration, and migration remain unverified in this worktree. Exact local manager/executor execution and the replacement deployment's read-only state are evidence for the deterministic contract paths only, not a substitute for live validator or ghost verification.
+- Full nondeterministic validator execution through the stock linter, live validator rounds, external ghost-transfer receipts, Vercel configuration, and migration remain unverified in this worktree. Exact local manager/executor execution is evidence for the deterministic contract paths only, not a substitute for live validator or ghost verification.
 - A proposal's reward pool and payment escrow are separate; UI balances must not be interpreted as interchangeable.
 - Studio Next is a development network. This repository does not claim a mainnet deployment or an independent third-party security audit.
-- The contract exposes `get_agent(agent_id)`, but no global agent enumeration or direct wallet-to-agent lookup. The frontend's remembered ID is only a discovery hint and is revalidated on-chain.
+- The local contract exposes `get_agent_by_wallet(wallet_address)` for direct current owner/operator discovery. The currently deployed older address does not yet expose it, so the frontend's remembered ID is only a compatibility hint and is revalidated on-chain.
 - The pinned runner is locally available through the current official manager bundle. The stock linter cannot consume its `.zip` layout, while the compatible manager/executor path can execute deterministic cases locally. Live validator behavior, ghost delivery and receipts remain environment-dependent.
 
 For a detailed source-level review, see [`docs/VETO_AUDIT.md`](docs/VETO_AUDIT.md). The exact interface and lifecycle notes are in [`docs/VETO_INTERFACE.md`](docs/VETO_INTERFACE.md).

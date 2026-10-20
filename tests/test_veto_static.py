@@ -52,7 +52,7 @@ def test_public_interface_contains_lifecycle_and_reads():
     }
     expected_reads = {
         "get_config", "get_campaign_count",
-        "get_agent", "get_agent_campaign_claimable", "get_campaign", "get_campaign_policies",
+        "get_agent", "get_agent_by_wallet", "get_agent_campaign_claimable", "get_campaign", "get_campaign_policies",
         "get_campaign_proposals", "get_campaign_participants", "get_agent_campaign_participation",
         "get_proposal", "get_proposal_challenges", "get_challenge",
         "get_agent_challenges", "get_my_campaigns", "get_pending_challenge_count",
@@ -136,4 +136,4 @@ def test_financial_invariant_fields_and_order_cursor_exist():
     ):
         assert field in SOURCE
     assert "resolution_cursor" in SOURCE
-    assert "MAX_EVALUATION_ATTEMPTS" in SOURCE
+    assert "MAX_ATTEMPTS" in SOURCE

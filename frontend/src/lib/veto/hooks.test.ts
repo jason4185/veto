@@ -17,6 +17,30 @@ describe("VETO query identity and retry policy", () => {
     expect(lower[1]).toBe("my-campaigns");
   });
 
+  it("isolates automatic agent recognition when the wallet changes", () => {
+    const owner = vetoQueryKey(
+      "wallet-agent",
+      "0x1111111111111111111111111111111111111111",
+      61997,
+      "1",
+    );
+    const operator = vetoQueryKey(
+      "wallet-agent",
+      "0x2222222222222222222222222222222222222222",
+      61997,
+      "1",
+    );
+    const refreshed = vetoQueryKey(
+      "wallet-agent",
+      "0x1111111111111111111111111111111111111111",
+      61997,
+      "2",
+    );
+
+    expect(owner).not.toEqual(operator);
+    expect(owner).not.toEqual(refreshed);
+  });
+
   it("retries transient RPC failures but not contract-state failures", () => {
     expect(shouldRetryVetoRead(0, new Error("request timed out"))).toBe(true);
     expect(shouldRetryVetoRead(1, new Error("failed to fetch"))).toBe(false);

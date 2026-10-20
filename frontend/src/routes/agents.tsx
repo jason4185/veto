@@ -54,7 +54,7 @@ function VerifiedAgentCard({ agent }: { agent: Agent }) {
       <div className="flex flex-wrap gap-2 mt-5">
         <Button asChild>
           <Link to="/agent/$id" params={{ id: agent.id }}>
-            Open profile <ArrowUpRight />
+            Open My Agent <ArrowUpRight />
           </Link>
         </Button>
         <Button asChild variant="outline">
@@ -168,7 +168,7 @@ function Agents() {
               !walletAgent && (
                 <ReadNotFound
                   title="No verified agent was found for this wallet."
-                  description="VETO checked the wallet’s finalized register_agent history and found no agent whose live owner or operator record matches this wallet. Use Find Agent by ID once if this registration predates the available history, or register a new agent."
+                  description="VETO checked this wallet’s saved agent association against the live owner and operator record. Use Find Agent by ID to link a previously registered agent, or register a new agent."
                 />
               )}
           </div>

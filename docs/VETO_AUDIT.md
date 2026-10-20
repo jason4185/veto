@@ -5,9 +5,9 @@
 - Authoritative source: `contracts/Veto.py`.
 - Runner pin: `py-genlayer:5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng`.
 - Network target: GenLayer Studio Next, chain `61997`.
-- Corrected replacement deployment: `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4`; live source retrieval matches the local artifact hash and size.
-- Existing deployment: `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8`; it was not modified.
-- Local source artifact: **51,948 UTF-8 bytes**, SHA-256 **`04b8faac2167ad24185f267509ee27ff5013c2c22c74707dff466a0cb26132aa`**; 52 bytes below the 52,000-byte limit.
+- Current deployed address: `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4`; it predates the local wallet-lookup revision and was not modified.
+- Historical deployment: `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8`; it was not modified.
+- Local source artifact: **51,986 UTF-8 bytes**, SHA-256 **`6041e7b033e9ab619e784412fce3becc9ce1214e850d09375ee3aca784b3016d`**; 14 bytes below the 52,000-byte limit.
 - This is a single-contract remediation. The retained `VETO_V2_ARCHITECTURE.md` filename describes the versioned security boundary, not a separate project.
 
 ## Findings and status
@@ -26,6 +26,8 @@ The contract can verify on-chain and byte-level facts. It cannot prove that a pu
 ### High — owner/operator cross-role identity bypass (fixed locally)
 
 `identity_agent_id` reserves both roles. Registration and operator replacement use the same map; a retired delegated operator is permanently reserved; participation checks the current owner/operator and active flag. A person can still control unrelated wallets; that is a Sybil limitation, not a cross-role registration bypass.
+
+`get_agent_by_wallet(wallet_address)` reads this same map and verifies the current `AgentState.owner` or `operator`. It returns `0` for an unregistered wallet, a retired/sentinel mapping, a missing agent record, a payout-only address, or a stale role mapping. It does not scan IDs or create a second identity store. The view identifies inactive agents but does not grant them challenge authorization.
 
 ### High operational — asynchronous native GEN delivery (not closed)
 
@@ -47,22 +49,23 @@ The contract uses bounded TreeMaps and pages; no DynArray or unbounded state-cha
 
 Current compact-source function references:
 
-- `_fetch_evidence` line 308; `_semantic_consensus` line 390.
-- `_policy_limit` line 268; `_snapshot_hash` line 122.
-- `publish_attestation` line 655; `evaluate_challenge` line 716.
-- `register_agent` line 562; `update_agent` line 579; `submit_challenge` line 676.
-- `_transfer` line 496; payment/reward/refund/remainder methods lines 813, 823, 843, and 866.
+- `_fetch_evidence` line 307; `_semantic_consensus` line 389.
+- `_policy_limit` line 267; `_snapshot_hash` line 121.
+- `publish_attestation` line 654; `evaluate_challenge` line 715.
+- `register_agent` line 561; `update_agent` line 578; `submit_challenge` line 675.
+- `_transfer` line 495; payment/reward/refund/remainder methods lines 812, 822, 842, and 865.
+- `get_agent_by_wallet` line 889; the lookup shares `identity_agent_id` with registration and replacement.
 
 ## Local proof
 
-`PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python3 -m pytest -q`: **38 passed**. This includes fabricated JSON/hash, false and genuine typed limits, context mismatch, mutable evidence, prompt injection, duplicate keys, attestation replay/expiry/context checks, identity attacks, ordered settlement, failed/ambiguous transfers, replay protection, and accounting isolation.
+`/private/tmp/veto-py312/bin/python -m pytest -q`: **39 passed**. This includes fabricated JSON/hash, false and genuine typed limits, context mismatch, mutable evidence, prompt injection, duplicate keys, attestation replay/expiry/context checks, identity attacks, wallet lookup, ordered settlement, failed/ambiguous transfers, replay protection, and accounting isolation.
 
-Python compilation and GenVM AST lint (3 checks) pass. The exact pinned runner is available in the official GenVM Manager `v0.6.0-rc6` bundle. The universal bundle SHA-256 is `bd30580f911338d5533460eca8ed714dec371de5803c04e41dbb96430aea7b6e`; its exact runner member is a `.zip` with SHA-256 `2cbcc8389744c4321852d2c0b4bfcef0729bfd22467e2aaf0d4d204cf6f015eb`. The official arm64 macOS execution bundle was independently checked against `SHA256SUMS` (`25995423dedb468d5d70673759e90dfaf33fe1b455982c343c2795952ae5e312`). Its `genvm check` and manager `check-install` both passed. Exact-manager SDK schema reflection passed for 29 methods (16 views, 13 writes, zero constructor parameters), and the exact bundled executor successfully ran initialization, typed-policy setup, 5 GEN/8 GEN and 5 GEN/4 GEN objective evaluations, invalid-constraint rejection, authority/context rejection, cross-role identity rejection, and an outbound `ExternalMessage` emission. The emitted message and post-emission `PAID` state are local executor observations, not proof of live ghost delivery. Stock `genvm-lint check` still fails with `E101` because it looks for `runners/py-genlayer/...<hash>.tar`, while the official bundle provides the exact runner as `.zip`; no replacement runner was used. Full nondeterministic semantic/validator execution and live Studio Next ghost delivery remain unproven. The replacement address has been read-verified; no funded Studio Next transaction, finalized child transfer, Vercel update, GitHub push, or financial transaction was performed in this worktree.
+Python 3.12 compilation and GenVM AST lint (3 checks) pass. The exact pinned runner is available in the official GenVM Manager `v0.6.0-rc6` bundle, but stock `genvm-lint check`, `validate`, and `schema` remain blocked with `E101`: the linter looks for `runners/py-genlayer/...<hash>.tar`, while the official bundle provides the exact runner as `.zip`. No replacement runner was used; full nondeterministic semantic/validator execution and live Studio Next ghost delivery remain unproven.
 
-Frontend adapter/tests/build after the remediation pass: TypeScript passed, Vitest passed 84 tests across 11 files, ESLint passed with 0 errors and 15 existing warnings, Prettier passed, and the production build passed with advisory chunk-size/configuration warnings. The adapter was read-verified against the replacement address; no funded transaction was performed.
+Frontend adapter/tests/build after the remediation pass: TypeScript passed, Vitest passed 90 tests across 11 files, ESLint passed with 0 errors and 15 existing warnings, Prettier passed, and the production build passed with advisory chunk-size/configuration warnings. The adapter supports the new lookup and a bounded fallback for the historical deployment; no funded transaction was performed.
 
-The frontend adapter references exactly the 29 methods in the exact-runner schema. The contract intentionally exposes `get_agent(agent_id)` but no `get_agent_count()` view; the initial read-only smoke plan must not invent that method or infer a global count from unrelated data.
+The frontend adapter references the corrected 30-method interface, including `get_agent_by_wallet(wallet_address)`, and does not invent `get_agent_count()`. Until a deployment exposing that view is configured, an unsupported-method response from the current deployed address falls back only to a previously verified local association and then rechecks `get_agent`; it never scans transaction history or sequential IDs.
 
 ## Deployment and migration
 
-The old address remains historical and retains its old state/code. The corrected replacement `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4` starts empty: campaigns, agents, rewards, escrows, and pending claims do not migrate automatically. Its source hash, schema, initial config, and read-only state are verified; live validator rounds, semantic validation through the stock tool, and real chain-level external-delivery tests remain unverified. Any production frontend rollout still requires separate approval and must not mix the two addresses.
+Both deployed addresses retain their own state/code. The local 30-method wallet-lookup revision has not been deployed; a future deployment starts with fresh campaigns, agents, rewards, escrows, and pending claims because storage does not migrate automatically. Live validator rounds, semantic validation through the stock tool, and real chain-level external-delivery tests remain unverified. Any frontend rollout must explicitly switch to the new address and must not mix contract scopes.

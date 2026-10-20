@@ -1,8 +1,8 @@
 # VETO contract interface and security boundary
 
-`contracts/Veto.py` is the authoritative interface. The corrected replacement deployment is `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4`; the historical deployment `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` is unchanged and uses separate state.
+`contracts/Veto.py` is the authoritative local interface. The current deployment is `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4`, but it predates the local `get_agent_by_wallet` revision; the historical deployment `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` is unchanged and uses separate state.
 
-Local artifact: 51,948 UTF-8 bytes, SHA-256 `04b8faac2167ad24185f267509ee27ff5013c2c22c74707dff466a0cb26132aa`.
+Local artifact: 51,986 UTF-8 bytes, SHA-256 `6041e7b033e9ab619e784412fce3becc9ce1214e850d09375ee3aca784b3016d`.
 
 ## Public writes
 
@@ -40,6 +40,8 @@ Any other policy is semantic. Its evidence URL must still be a single HTTPS `*.n
 
 The existing lifecycle reads remain available: configuration, campaign/agent/proposal/challenge records, paginated policies/proposals/participants/history, participation and claimable reward lookups, pending challenge count, and global accounting.
 
+`get_agent_by_wallet(wallet_address)` is the new direct lookup. It validates the supplied address, reads the shared `identity_agent_id` reservation, rejects zero/retired/sentinel/missing records, and verifies that the live agent owner or current operator still matches. It returns the agent ID as `u256`; `0` means no current agent. Payout addresses are never included in this lookup. Inactive agents remain identifiable but cannot submit challenges.
+
 `get_config()` now additionally returns:
 
 ```json
@@ -63,8 +65,8 @@ Frontend adapters must require these fields before treating a deployment as the 
 
 ## Migration
 
-Changing the local source does not change the historical address. The corrected replacement has fresh storage. Existing campaigns, registered agents, claimable rewards, proposal escrows, and pending transactions remain associated with the old address and cannot be mixed with new-contract reads. A migration requires an explicit, separately audited mechanism and user approval.
+Changing the local source does not change either deployed address. A future deployment of this 30-method interface has fresh storage. Existing campaigns, registered agents, claimable rewards, proposal escrows, and pending transactions remain associated with their original address and cannot be mixed with new-contract reads. A migration requires an explicit, separately audited mechanism and user approval.
 
 ## Validation status
 
-Local host/static suite: **38 passed**. Python compilation and GenVM AST lint pass. The exact v0.6.0-rc6 manager/executor bundle was hash-checked, its runners passed `genvm check` and manager `check-install`, and it executed initialization, typed objective-policy cases, rejection gates, identity rejection, and external-message emission locally. Exact-manager schema reflection passed (29 methods: 16 views and 13 writes). Stock `genvm-lint check` remains blocked by `E101` because it expects an exact-runner `.tar` member while the official bundle provides `.zip`; no full nondeterministic validator execution is claimed. The replacement address has been read-verified on Studio Next; no funded transaction or GEN transfer was performed.
+Local host/static suite: **39 passed**. Python 3.12 compilation and GenVM AST lint pass. The exact v0.6.0-rc6 manager/executor bundle was hash-checked, its runners passed `genvm check` and manager `check-install`, and it executed the previously recorded deterministic cases locally. The contract now reflects 30 public methods (17 views and 13 writes) by AST; stock exact-runner schema/semantic validation remains blocked by `E101` because the installed linter expects an exact-runner `.tar` member while the official bundle provides `.zip`. No other runner was substituted and no full nondeterministic validator execution is claimed. The existing replacement address has not been redeployed or modified; no funded transaction or GEN transfer was performed in this work.

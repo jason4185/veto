@@ -51,7 +51,7 @@ import { useWallet } from "@/lib/veto/wallet";
 import { usePendingTransactions } from "@/lib/veto/pending";
 import { TransactionRunner, transactionResultId } from "@/lib/veto/transaction";
 import { getVetoTransaction } from "@/lib/veto/client";
-import { rememberKnownAgentId } from "@/lib/veto/agent-memory";
+import { forgetKnownAgentId, rememberVerifiedAgent } from "@/lib/veto/agent-memory";
 import {
   VetoErrorNotice,
   WalletGate,
@@ -633,7 +633,20 @@ export function RegisterAgentForm() {
                     );
                     return;
                   }
-                  rememberKnownAgentId(wallet.address, agentId);
+                  if (
+                    !wallet.address ||
+                    registeredAgent.owner.toLowerCase() !== wallet.address.toLowerCase()
+                  ) {
+                    setError(
+                      "Registration finalized, but the returned agent is not owned by the registering wallet.",
+                    );
+                    return;
+                  }
+                  if (!rememberVerifiedAgent(registeredAgent, agentId)) {
+                    setError(
+                      "Registration finalized, but this browser could not save the verified owner/operator association.",
+                    );
+                  }
                   await invalidateVetoQueries(
                     queryClient,
                     invalidationKeysForWrite(write, queryClient),
@@ -758,10 +771,44 @@ export function UpdateAgentForm({
         <WriteRunner
           write={write}
           label="Update agent"
-          onDone={(id) => {
+          onDone={async (id) => {
             setTxId(id);
             setWrite(null);
-            void invalidateVetoQueries(queryClient, invalidationKeysForWrite(write, queryClient));
+            const client = wallet.connectedClient;
+            if (!client) {
+              setError(
+                "Agent update finalized, but the wallet client disconnected before verification.",
+              );
+              return;
+            }
+            try {
+              const updatedAgent = await getAgent(agent.id, client);
+              if (
+                updatedAgent.owner.toLowerCase() !== agent.owner.toLowerCase() ||
+                updatedAgent.id !== agent.id
+              ) {
+                throw new Error(
+                  "Agent update finalized, but the live owner record could not be verified.",
+                );
+              }
+              if (!rememberVerifiedAgent(updatedAgent, agent.id)) {
+                setError(
+                  "Agent update finalized, but this browser could not save the verified owner/operator association.",
+                );
+              }
+              if (
+                agent.operator.toLowerCase() !== updatedAgent.operator.toLowerCase() &&
+                agent.operator.toLowerCase() !== updatedAgent.owner.toLowerCase()
+              ) {
+                forgetKnownAgentId(agent.operator);
+              }
+              await invalidateVetoQueries(
+                queryClient,
+                invalidationKeysForWrite(write, queryClient),
+              );
+            } catch (reason) {
+              setError(reason);
+            }
           }}
           onError={(reason) => {
             setError(reason);
@@ -1114,7 +1161,7 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
           <>
             <ReadNotFound
               title="No verified agent was found automatically."
-              description="The VETO contract has no direct wallet-to-agent view. Studio Next history did not expose a verified registration for this wallet. Use the advanced Agent ID field above or register an agent."
+              description="This deployment does not expose the direct wallet-to-agent view yet, and no verified registration was found for this wallet. Use the advanced Agent ID field above or register an agent."
             />
             <p className="text-sm mt-3">
               <Link to="/agents" className="text-link">

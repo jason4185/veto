@@ -1,5 +1,5 @@
 import type { Address } from "viem";
-import { getReadClient, getVetoTransaction, type GenLayerClient } from "./client";
+import { getReadClient, type GenLayerClient } from "./client";
 import { vetoContractAddress } from "./network";
 import {
   STUDIO_NEXT_CHAIN_ID,
@@ -25,7 +25,6 @@ import { runRpcRequest } from "./rpc";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Raw = any;
 const READ_TIMEOUT_MS = 20_000;
-const AGENT_HISTORY_MAX_CANDIDATES = 25;
 export const VETO_READ_STATE: VetoReadState = "latest-nonfinal";
 
 export type ContractWrite = {
@@ -137,125 +136,6 @@ async function read(client: GenLayerClient, method: string, args: unknown[] = []
         result: "ok",
       });
     return result;
-  } catch (reason) {
-    const error = new VetoReadError(
-      { ...context, durationMs: Math.round(performance.now() - startedAt) },
-      reason,
-    );
-    if (import.meta.env.DEV)
-      console.debug("[veto:read]", { ...error.context, result: "error", error: error.causeText });
-    throw error;
-  } finally {
-    if (timeoutId) clearTimeout(timeoutId);
-  }
-}
-
-type HistoryRecord = {
-  hash?: unknown;
-  from_address?: unknown;
-  to_address?: unknown;
-  status?: unknown;
-  data?: unknown;
-};
-
-function objectRecord(value: unknown): Record<string, unknown> | undefined {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : undefined;
-}
-
-function sameAddressValue(left: unknown, right: string): boolean {
-  return typeof left === "string" && left.toLowerCase() === right.toLowerCase();
-}
-
-function methodFromCalldata(value: unknown): string | undefined {
-  if (typeof value !== "string" || typeof atob !== "function") return undefined;
-  try {
-    const decoded = atob(value);
-    const body = decoded.slice(2);
-    const separator = body.indexOf("\u0004");
-    const method = separator >= 0 ? body.slice(0, separator) : body;
-    return /^[A-Za-z_][A-Za-z0-9_]*$/.test(method) ? method : undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-function historyMethod(transaction: HistoryRecord): string | undefined {
-  const data = objectRecord(transaction.data);
-  return methodFromCalldata(data?.["calldata"]);
-}
-
-function finalizedSuccessful(transaction: {
-  status?: unknown;
-  statusName?: unknown;
-  txExecutionResult?: unknown;
-  txExecutionResultName?: unknown;
-}): boolean {
-  const finalized = transaction.statusName === "FINALIZED" || transaction.status === "FINALIZED";
-  const successful =
-    transaction.txExecutionResultName === "FINISHED_WITH_RETURN" ||
-    transaction.txExecutionResult === 1;
-  return finalized && successful;
-}
-
-function transactionResultId(value: unknown): string | undefined {
-  if (typeof value === "bigint") return normalizeContractId(value.toString());
-  if (typeof value === "number" && Number.isSafeInteger(value)) return normalizeContractId(value);
-  if (typeof value === "string") return normalizeContractId(value);
-  return undefined;
-}
-
-async function sdkHistory(client: GenLayerClient, address: string): Promise<HistoryRecord[]> {
-  const method = "sim_getTransactionsForAddress";
-  const startedAt = performance.now();
-  const context = {
-    contract: vetoContractAddress,
-    chainId: STUDIO_NEXT_CHAIN_ID,
-    rpcUrl: STUDIO_NEXT_RPC_URL,
-    method,
-    args: [address],
-    state: "latest-nonfinal" as const,
-    durationMs: 0,
-    ...(client.account?.address ? { sender: client.account.address } : {}),
-  };
-  let timeoutId: ReturnType<typeof setTimeout> | undefined;
-  try {
-    // Studio Next currently accepts the SDK-supported address-only form. Passing the
-    // optional filter parameter causes an RPC "Too many parameters" error there.
-    const result = await runRpcRequest({
-      key: `history:${STUDIO_NEXT_CHAIN_ID}:${address.toLowerCase()}`,
-      method,
-      priority: "background",
-      request: async () => {
-        const request = client.request({
-          method,
-          params: [address as Address],
-        });
-        return Promise.race([
-          request,
-          new Promise<never>((_, reject) => {
-            timeoutId = setTimeout(
-              () =>
-                reject(
-                  new Error(`Studio Next history read timed out after ${READ_TIMEOUT_MS} ms.`),
-                ),
-              READ_TIMEOUT_MS,
-            );
-          }),
-        ]);
-      },
-    });
-    if (!Array.isArray(result))
-      throw new Error("Studio Next returned an invalid transaction history.");
-    if (import.meta.env.DEV)
-      console.debug("[veto:read]", {
-        ...context,
-        durationMs: Math.round(performance.now() - startedAt),
-        result: "ok",
-        records: result.length,
-      });
-    return result as HistoryRecord[];
   } catch (reason) {
     const error = new VetoReadError(
       { ...context, durationMs: Math.round(performance.now() - startedAt) },
@@ -659,18 +539,35 @@ export async function getAgent(agentId: string, client = getReadClient()) {
   return mapAgent(await read(client, "get_agent", [contractId(agentId, "agent ID")]));
 }
 
+export async function getAgentByWallet(walletAddress: string, client = getReadClient()) {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(walletAddress)) throw new Error("Invalid wallet address.");
+  const value = integer(await read(client, "get_agent_by_wallet", [walletAddress]), "agent ID");
+  return value === 0n ? undefined : normalizeContractId(value.toString());
+}
+
 export type WalletAgentDiscovery = {
   agent: Agent;
-  source: "remembered" | "registration-history";
+  source: "onchain" | "remembered";
 };
 
+function walletLookupUnsupported(reason: unknown): boolean {
+  const text =
+    reason instanceof VetoReadError
+      ? reason.causeText
+      : reason instanceof Error
+        ? reason.message
+        : String(reason);
+  return /method not found|unknown method|function not found|no such method|unsupported method|not implemented|does not exist/.test(
+    text.toLowerCase(),
+  );
+}
+
 /**
- * Recover a wallet's agent without making cached browser metadata authoritative.
+ * Prefer the contract's direct wallet lookup without making cached browser metadata authoritative.
  *
- * Veto.py intentionally exposes only get_agent(agent_id), so this first verifies a
- * remembered ID and then uses Studio's read-only transaction history to locate a
- * finalized register_agent return value. Every candidate is verified through the
- * live agent record and owner/operator fields before it is returned.
+ * The remembered ID remains a compatibility fallback for the historical deployment
+ * until a replacement exposing get_agent_by_wallet is configured. Every returned
+ * candidate is verified through the live agent record and owner/operator fields.
  */
 export async function discoverWalletAgent(
   walletAddress: string,
@@ -679,6 +576,16 @@ export async function discoverWalletAgent(
 ): Promise<WalletAgentDiscovery | null> {
   if (!/^0x[0-9a-fA-F]{40}$/.test(walletAddress)) return null;
 
+  try {
+    const onchainId = await getAgentByWallet(walletAddress, client);
+    if (!onchainId) return null;
+    const onchainAgent = await getAgent(onchainId, client);
+    if (!agentControlsWallet(onchainAgent, walletAddress)) return null;
+    return { agent: onchainAgent, source: "onchain" };
+  } catch (reason) {
+    if (!walletLookupUnsupported(reason)) throw reason;
+  }
+
   if (rememberedId && normalizeContractId(rememberedId)) {
     try {
       const rememberedAgent = await getAgent(normalizeContractId(rememberedId)!, client);
@@ -686,37 +593,8 @@ export async function discoverWalletAgent(
         return { agent: rememberedAgent, source: "remembered" };
       }
     } catch (reason) {
-      // An unknown cached ID can be recovered from history. Actual RPC/configuration
-      // failures must remain errors and must not be converted into "no agent".
-      const text =
-        reason instanceof Error ? reason.message.toLowerCase() : String(reason).toLowerCase();
-      if (!text.includes("unknown agent")) throw reason;
-    }
-  }
-
-  const history = await sdkHistory(client, walletAddress);
-  const candidates = history
-    .filter(
-      (transaction) =>
-        sameAddressValue(transaction.from_address, walletAddress) &&
-        sameAddressValue(transaction.to_address, vetoContractAddress) &&
-        transaction.status === "FINALIZED" &&
-        historyMethod(transaction) === "register_agent",
-    )
-    .slice(0, AGENT_HISTORY_MAX_CANDIDATES);
-
-  for (const candidate of candidates) {
-    if (typeof candidate.hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(candidate.hash)) continue;
-    const transaction = await getVetoTransaction(client, candidate.hash);
-    if (!finalizedSuccessful(transaction)) continue;
-    const agentId = transactionResultId(transaction.result);
-    if (!agentId) continue;
-    try {
-      const agent = await getAgent(agentId, client);
-      if (agentControlsWallet(agent, walletAddress)) {
-        return { agent, source: "registration-history" };
-      }
-    } catch (reason) {
+      // Unknown or stale cached IDs are rejected. Actual RPC/configuration failures
+      // must remain errors and must not be converted into "no agent".
       const text =
         reason instanceof Error ? reason.message.toLowerCase() : String(reason).toLowerCase();
       if (!text.includes("unknown agent")) throw reason;

@@ -9,6 +9,7 @@ import {
   getConfig,
   getCreatorCampaigns,
   getAgent,
+  getAgentByWallet,
   getMyCampaigns,
   simpleWrite,
   submitChallengeWrite,
@@ -218,6 +219,21 @@ describe("VETO creator campaign reads", () => {
 });
 
 describe("VETO public read adapter", () => {
+  it("reads the explicit wallet lookup and maps zero to not found", async () => {
+    const readContract = vi.fn().mockResolvedValue(7);
+    await expect(getAgentByWallet(creator, { readContract } as never)).resolves.toBe("7");
+    expect(readContract).toHaveBeenCalledWith(
+      expect.objectContaining({
+        functionName: "get_agent_by_wallet",
+        args: [creator],
+        transactionHashVariant: "latest-nonfinal",
+      }),
+    );
+
+    readContract.mockResolvedValue(0);
+    await expect(getAgentByWallet(creator, { readContract } as never)).resolves.toBeUndefined();
+  });
+
   it("reads and maps a public agent without requiring a wallet", async () => {
     const readContract = vi.fn().mockResolvedValue({
       agent_id: 1,
@@ -251,98 +267,100 @@ describe("VETO public read adapter", () => {
     );
   });
 
-  it("verifies a remembered wallet agent without querying history", async () => {
+  it("uses the on-chain wallet lookup and verifies the returned agent", async () => {
     const request = vi.fn();
     const client = {
       request,
-      readContract: vi.fn().mockResolvedValue({
-        agent_id: 1,
-        active: true,
-        challenge_count: 0,
-        accepted_count: 0,
-        claimable: 0,
-        total_earned: 0,
-        name: "VETO Audit Agent 01",
-        description: "An on-chain governance auditor.",
-        owner: creator,
-        operator: creator,
-        payout_address: creator,
+      readContract: vi.fn(({ functionName }: { functionName: string }) =>
+        functionName === "get_agent_by_wallet"
+          ? 1
+          : {
+              agent_id: 1,
+              active: true,
+              challenge_count: 0,
+              accepted_count: 0,
+              claimable: 0,
+              total_earned: 0,
+              name: "VETO Audit Agent 01",
+              description: "An on-chain governance auditor.",
+              owner: creator,
+              operator: creator,
+              payout_address: creator,
+            },
+      ),
+    };
+
+    const result = await discoverWalletAgent(creator, undefined, client as never);
+
+    expect(result).toMatchObject({ source: "onchain", agent: { id: "1", owner: creator } });
+    expect(request).not.toHaveBeenCalled();
+  });
+
+  it("falls back to a verified remembered ID for the historical deployment", async () => {
+    const client = {
+      request: vi.fn(),
+      readContract: vi.fn(({ functionName }: { functionName: string }) => {
+        if (functionName === "get_agent_by_wallet") throw new Error("method not found");
+        return {
+          agent_id: 1,
+          active: true,
+          challenge_count: 0,
+          accepted_count: 0,
+          claimable: 0,
+          total_earned: 0,
+          name: "VETO Audit Agent 01",
+          description: "An on-chain governance auditor.",
+          owner: creator,
+          operator: creator,
+          payout_address: creator,
+        };
       }),
     };
 
     const result = await discoverWalletAgent(creator, "1", client as never);
 
     expect(result).toMatchObject({ source: "remembered", agent: { id: "1", owner: creator } });
-    expect(request).not.toHaveBeenCalled();
-  });
-
-  it("discovers and verifies a previous registration from real transaction history", async () => {
-    const hash = `0x${"1".repeat(64)}`;
-    const client = {
-      request: vi.fn().mockResolvedValue([
-        {
-          hash,
-          from_address: creator,
-          to_address: vetoContractAddress,
-          status: "FINALIZED",
-          data: { calldata: btoa("\u0016\u0000register_agent\u0004args") },
-        },
-      ]),
-      getTransaction: vi.fn().mockResolvedValue({
-        statusName: "FINALIZED",
-        txExecutionResultName: "FINISHED_WITH_RETURN",
-        result: 1,
-      }),
-      readContract: vi.fn().mockResolvedValue({
-        agent_id: 1,
-        active: true,
-        challenge_count: 0,
-        accepted_count: 0,
-        claimable: 0,
-        total_earned: 0,
-        name: "VETO Audit Agent 01",
-        description: "An on-chain governance auditor.",
-        owner: creator,
-        operator: creator,
-        payout_address: creator,
-      }),
-    };
-
-    const result = await discoverWalletAgent(creator, undefined, client as never);
-
-    expect(result).toMatchObject({
-      source: "registration-history",
-      agent: { id: "1", name: "VETO Audit Agent 01" },
-    });
-    expect(client.getTransaction).toHaveBeenCalledWith({ hash });
+    expect(client.request).not.toHaveBeenCalled();
   });
 
   it("does not accept a remembered ID when the live owner/operator is another wallet", async () => {
     const otherWallet = "0x1111111111111111111111111111111111111111";
     const client = {
-      request: vi.fn().mockResolvedValue([]),
-      readContract: vi.fn().mockResolvedValue({
-        agent_id: 1,
-        active: true,
-        challenge_count: 0,
-        accepted_count: 0,
-        claimable: 0,
-        total_earned: 0,
-        name: "Someone else’s agent",
-        description: "Not controlled by this wallet.",
-        owner: otherWallet,
-        operator: otherWallet,
-        payout_address: otherWallet,
-      }),
+      request: vi.fn(),
+      readContract: vi.fn(({ functionName }: { functionName: string }) =>
+        functionName === "get_agent_by_wallet"
+          ? 1
+          : {
+              agent_id: 1,
+              active: true,
+              challenge_count: 0,
+              accepted_count: 0,
+              claimable: 0,
+              total_earned: 0,
+              name: "Someone else’s agent",
+              description: "Not controlled by this wallet.",
+              owner: otherWallet,
+              operator: otherWallet,
+              payout_address: otherWallet,
+            },
+      ),
     };
 
     const result = await discoverWalletAgent(creator, "1", client as never);
 
     expect(result).toBeNull();
-    expect(client.request).toHaveBeenCalledWith({
-      method: "sim_getTransactionsForAddress",
-      params: [creator],
-    });
+    expect(client.request).not.toHaveBeenCalled();
+  });
+
+  it("does not discover an agent from transaction history when no association is saved", async () => {
+    const client = {
+      request: vi.fn(),
+      readContract: vi.fn().mockRejectedValue(new Error("method not found")),
+    };
+
+    await expect(discoverWalletAgent(creator, undefined, client as never)).resolves.toBeNull();
+    expect(client.request).not.toHaveBeenCalled();
+    expect(client.readContract).toHaveBeenCalledTimes(1);
   });
 
   it("preserves an unknown-agent contract error as a read failure", async () => {

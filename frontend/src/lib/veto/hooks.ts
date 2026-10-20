@@ -24,7 +24,7 @@ import {
   discoverWalletAgent,
   VETO_READ_STATE,
 } from "./contract";
-import { readKnownAgentId, rememberKnownAgentId } from "./agent-memory";
+import { forgetKnownAgentId, readKnownAgentId, rememberKnownAgentId } from "./agent-memory";
 
 const enabled = connectionState === "ready";
 const contractScope = chainConfig.contract?.toLowerCase() ?? "unconfigured";
@@ -214,7 +214,9 @@ export function useVetoConfig() {
     queryFn: () => getConfig(),
     enabled,
     ...options,
-    staleTime: 5 * 60_000,
+    // A wallet reconnect must re-check the live owner/operator mapping. The shared
+    // RPC layer still deduplicates simultaneous reads and there is no polling.
+    staleTime: 0,
   });
 }
 export function useCampaigns(offset = 0, limit = 50) {
@@ -332,12 +334,18 @@ export function useWalletAgent(address?: string, chainId?: number) {
     queryFn: async () => {
       if (!address) return null;
       const discovered = await discoverWalletAgent(address, rememberedId);
-      if (discovered) rememberKnownAgentId(address, discovered.agent.id);
+      if (discovered) {
+        rememberKnownAgentId(address, discovered.agent.id);
+      } else if (rememberedId) {
+        forgetKnownAgentId(address);
+      }
       return discovered;
     },
-    enabled: enabled && Boolean(address),
+    enabled: enabled && Boolean(address) && chainId === chainConfig.chainId,
     ...options,
-    staleTime: 5 * 60_000,
+    // Reconnects must re-check the live owner/operator mapping. The shared RPC
+    // layer still deduplicates simultaneous reads and there is no polling.
+    staleTime: 0,
     refetchInterval: false,
     refetchOnWindowFocus: false,
   });

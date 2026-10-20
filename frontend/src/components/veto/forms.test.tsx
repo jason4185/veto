@@ -3,8 +3,9 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ContractWrite } from "@/lib/veto/contract";
+import { readKnownAgentId, rememberKnownAgentId } from "@/lib/veto/agent-memory";
 import { rememberPendingTransaction } from "@/lib/veto/pending";
-import { ChallengeForm, CreatorForm, FundedProposalForm } from "./forms";
+import { ChallengeForm, CreatorForm, FundedProposalForm, UpdateAgentForm } from "./forms";
 
 vi.mock("@tanstack/react-router", () => ({
   Link: ({ children }: { children: ReactNode }) => <a href="#">{children}</a>,
@@ -107,7 +108,7 @@ vi.mock("@/lib/veto/hooks", () => ({
   useProposal: () => ({ data: mocks.proposal }),
   useWalletAgent: () => ({
     data: {
-      source: "registration-history",
+      source: "remembered",
       agent: {
         id: "1",
         name: "VETO Audit Agent 01",
@@ -396,7 +397,7 @@ describe("RegisterAgentForm finalized navigation", () => {
       name: "Verified agent",
       description: "Verified on-chain.",
       owner: mocks.wallet.address,
-      operator: mocks.wallet.address,
+      operator: "0x2222222222222222222222222222222222222222",
       payoutAddress: mocks.wallet.address,
       active: true,
       challengeCount: 0,
@@ -417,6 +418,9 @@ describe("RegisterAgentForm finalized navigation", () => {
     fireEvent.change(screen.getByLabelText("Agent description"), {
       target: { value: "Verified on-chain." },
     });
+    fireEvent.change(screen.getByLabelText("Operator address"), {
+      target: { value: "0x2222222222222222222222222222222222222222" },
+    });
     fireEvent.click(screen.getByRole("button", { name: "Review registration" }));
     fireEvent.click(screen.getByRole("checkbox"));
     fireEvent.click(screen.getByRole("button", { name: "Register agent" }));
@@ -430,5 +434,49 @@ describe("RegisterAgentForm finalized navigation", () => {
     );
     expect(connectedClient.getTransaction).toHaveBeenCalledWith({ hash: "0xregistration" });
     expect(mocks.getAgent).toHaveBeenCalledWith("1", connectedClient);
+    expect(readKnownAgentId(mocks.wallet.address)).toBe("1");
+    expect(readKnownAgentId("0x2222222222222222222222222222222222222222")).toBe("1");
+  });
+});
+
+describe("UpdateAgentForm operator association", () => {
+  it("forgets a replaced operator only after the update is finalized and verified", async () => {
+    const oldOperator = "0x2222222222222222222222222222222222222222";
+    const newOperator = "0x3333333333333333333333333333333333333333";
+    const agent = {
+      id: "1",
+      name: "Verified agent",
+      description: "Verified on-chain.",
+      owner: mocks.wallet.address,
+      operator: oldOperator,
+      payoutAddress: mocks.wallet.address,
+      active: true,
+    };
+    const updatedAgent = {
+      ...agent,
+      operator: newOperator,
+      challengeCount: 0,
+      acceptedCount: 0,
+      claimable: 0n,
+      totalEarned: 0n,
+    };
+    const connectedClient = {};
+    mocks.wallet.connectedClient = connectedClient;
+    expect(rememberKnownAgentId(oldOperator, "1")).toBe(true);
+    mocks.getAgent.mockResolvedValue(updatedAgent);
+
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <UpdateAgentForm agent={agent} />
+      </QueryClientProvider>,
+    );
+    fireEvent.change(screen.getByLabelText("Updated operator address"), {
+      target: { value: newOperator },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Review profile update" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Finalize transaction" }));
+
+    await waitFor(() => expect(readKnownAgentId(newOperator)).toBe("1"));
+    expect(readKnownAgentId(oldOperator)).toBeUndefined();
   });
 });
