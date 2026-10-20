@@ -126,7 +126,7 @@ The authoritative implementation is [`contracts/Veto.py`](contracts/Veto.py). Th
 | `create_campaign(name, description, policies, max_agents, reward_per_accepted_agent, duration_seconds)` | Payable, permissionless creation with exact fixed funding of `max_agents × reward_per_accepted_agent`. |
 | `close_campaign(campaign_id)`                                                                           | Creator-only close after intake and all campaign obligations permit closure.                           |
 | `claim_campaign_remainder(campaign_id)`                                                                 | Creator-only claim of the remaining uncommitted campaign reward after closure.                         |
-| `publish_attestation(campaign_id, proposal_id, policy_index, evidence_sha256, expires_at)`             | Deployment authority only; records one context-bound semantic evidence authorization with expiry.       |
+| `publish_attestation(campaign_id, proposal_id, policy_index, evidence_sha256, expires_at)`              | Deployment authority only; records one context-bound semantic evidence authorization with expiry.      |
 
 ### Proposal management
 
@@ -152,25 +152,25 @@ The authoritative implementation is [`contracts/Veto.py`](contracts/Veto.py). Th
 
 ### Read-only queries
 
-| Method                                                    | Return purpose                                                                           |
-| --------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| `get_config()`                                            | Contract limits and lifecycle configuration.                                             |
-| `get_campaign_count()`                                    | Total campaign count.                                                                    |
-| `get_agent(agent_id)`                                     | One agent profile and accounting summary by ID.                                          |
+| Method                                                    | Return purpose                                                                                   |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `get_config()`                                            | Contract limits and lifecycle configuration.                                                     |
+| `get_campaign_count()`                                    | Total campaign count.                                                                            |
+| `get_agent(agent_id)`                                     | One agent profile and accounting summary by ID.                                                  |
 | `get_agent_by_wallet(wallet_address)`                     | Returns the current owner/operator agent ID, or `0` when the wallet is not currently authorized. |
-| `get_agent_campaign_claimable(agent_id, campaign_id)`     | Campaign-scoped claimable reward for an agent.                                           |
-| `get_campaign(campaign_id)`                               | Campaign state, limits, deadline, participation, reward accounting, and proposal counts. |
-| `get_campaign_policies(campaign_id, offset, limit)`       | Paginated campaign policy text.                                                          |
-| `get_campaign_proposals(campaign_id, offset, limit)`      | Paginated proposal IDs/records for a campaign.                                           |
-| `get_campaign_participants(campaign_id, offset, limit)`   | Paginated participating agent IDs.                                                       |
-| `get_agent_campaign_participation(agent_id, campaign_id)` | Agent participation record for a campaign.                                               |
-| `get_proposal(proposal_id)`                               | Proposal, policy, escrow, resolution, and terminal state.                                |
-| `get_proposal_challenges(proposal_id, offset, limit)`     | Paginated challenge records for a proposal.                                              |
-| `get_challenge(challenge_id)`                             | One challenge's evidence and evaluation state.                                           |
-| `get_agent_challenges(agent_id, offset, limit)`           | Paginated challenge history for an agent.                                                |
-| `get_my_campaigns(offset, limit)`                         | Sender-scoped paginated campaigns owned by the read caller.                              |
-| `get_pending_challenge_count(proposal_id)`                | Number of pending challenges for a proposal.                                             |
-| `get_global_accounting()`                                 | Global reward and escrow accounting counters.                                            |
+| `get_agent_campaign_claimable(agent_id, campaign_id)`     | Campaign-scoped claimable reward for an agent.                                                   |
+| `get_campaign(campaign_id)`                               | Campaign state, limits, deadline, participation, reward accounting, and proposal counts.         |
+| `get_campaign_policies(campaign_id, offset, limit)`       | Paginated campaign policy text.                                                                  |
+| `get_campaign_proposals(campaign_id, offset, limit)`      | Paginated proposal IDs/records for a campaign.                                                   |
+| `get_campaign_participants(campaign_id, offset, limit)`   | Paginated participating agent IDs.                                                               |
+| `get_agent_campaign_participation(agent_id, campaign_id)` | Agent participation record for a campaign.                                                       |
+| `get_proposal(proposal_id)`                               | Proposal, policy, escrow, resolution, and terminal state.                                        |
+| `get_proposal_challenges(proposal_id, offset, limit)`     | Paginated challenge records for a proposal.                                                      |
+| `get_challenge(challenge_id)`                             | One challenge's evidence and evaluation state.                                                   |
+| `get_agent_challenges(agent_id, offset, limit)`           | Paginated challenge history for an agent.                                                        |
+| `get_my_campaigns(offset, limit)`                         | Sender-scoped paginated campaigns owned by the read caller.                                      |
+| `get_pending_challenge_count(proposal_id)`                | Number of pending challenges for a proposal.                                                     |
+| `get_global_accounting()`                                 | Global reward and escrow accounting counters.                                                    |
 
 All paginated reads use bounded offset/limit inputs with a maximum page size of 50. `get_agent_by_wallet` uses the shared owner/operator reservation map and verifies the live agent record; it does not treat payout addresses, retired operators, or stale mappings as current ownership. It is a direct lookup, not a global agent enumeration.
 
@@ -209,16 +209,16 @@ The repository uses:
 
 The current deployment target is GenLayer Studio Next, not GenLayer mainnet.
 
-| Item                    | Value                                                                                                                                       |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Network                 | GenLayer Studio Next                                                                                                                        |
-| Chain ID                | `61997`                                                                                                                                     |
-| RPC                     | `https://studio-next.genlayer.com/api`                                                                                                      |
+| Item                      | Value                                                                                                                                       |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Network                   | GenLayer Studio Next                                                                                                                        |
+| Chain ID                  | `61997`                                                                                                                                     |
+| RPC                       | `https://studio-next.genlayer.com/api`                                                                                                      |
 | Current deployed contract | [`0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd`](https://explorer-studio-dev.genlayer.com/address/0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd) |
-| Historical contract     | [`0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8`](https://explorer-studio-dev.genlayer.com/address/0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8) |
-| Explorer                | [GenLayer Studio Explorer](https://explorer-studio-dev.genlayer.com/)                                                                       |
-| Local source size             | 51,986 UTF-8 bytes                                                                                                                       |
-| Local source SHA-256          | `6041e7b033e9ab619e784412fce3becc9ce1214e850d09375ee3aca784b3016d`                                                                     |
+| Historical contract       | [`0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8`](https://explorer-studio-dev.genlayer.com/address/0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8) |
+| Explorer                  | [GenLayer Studio Explorer](https://explorer-studio-dev.genlayer.com/)                                                                       |
+| Local source size         | 51,986 UTF-8 bytes                                                                                                                          |
+| Local source SHA-256      | `6041e7b033e9ab619e784412fce3becc9ce1214e850d09375ee3aca784b3016d`                                                                          |
 
 The current deployed address exposes the 30-method interface, including `get_agent_by_wallet`, and was verified read-only against Studio Next. The historical address was not modified and has separate state. No campaign funding or GEN transfer was performed during this verification.
 
@@ -279,17 +279,17 @@ The frontend first calls `get_agent_by_wallet` for the connected wallet and then
 
 The repository was checked locally before publication:
 
-| Check                                     | Result                                                                                                                                                                        |
-| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Python compilation of `contracts/Veto.py` | Passed.                                                                                                                                                                       |
-| Contract host-emulation/static suite      | **39 passed** with `/private/tmp/veto-py312/bin/python -m pytest -q`.                                                                                                            |
-| GenVM AST lint                            | Passed.                                                                                                                                                                       |
-| GenVM validation                         | Exact v0.6.0-rc6 manager/executor ran initialization, typed objective evaluations, invalid constraints, authority/context gates, cross-role identity rejection, and external-message emission. Stock `genvm-lint check` remains blocked by `E101` because it expects a `.tar` runner member while the official bundle supplies the exact runner as `.zip`; nondeterministic validator execution is not claimed. |
-| Frontend TypeScript                       | Passed with `bunx tsc --noEmit`.                                                                                                                                              |
-| Frontend Vitest                           | **91 tests passed** across 11 files, including malformed-registration, finalized-return, and wallet-agent verification regressions.                                             |
-| Frontend ESLint                           | Passed with 0 errors and 15 existing Fast Refresh warnings.                                                                                                                   |
-| Frontend Prettier                         | Passed with `bunx prettier --check .`.                                                                                                                                        |
-| Frontend production build                 | Passed with `bun run build`; Vite/Nitro emitted advisory chunk-size and configuration warnings only.                                                                          |
+| Check                                     | Result                                                                                                                                                                                                                                                                                                                                                                                                          |
+| ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Python compilation of `contracts/Veto.py` | Passed.                                                                                                                                                                                                                                                                                                                                                                                                         |
+| Contract host-emulation/static suite      | **39 passed** with `/private/tmp/veto-py312/bin/python -m pytest -q`.                                                                                                                                                                                                                                                                                                                                           |
+| GenVM AST lint                            | Passed.                                                                                                                                                                                                                                                                                                                                                                                                         |
+| GenVM validation                          | Exact v0.6.0-rc6 manager/executor ran initialization, typed objective evaluations, invalid constraints, authority/context gates, cross-role identity rejection, and external-message emission. Stock `genvm-lint check` remains blocked by `E101` because it expects a `.tar` runner member while the official bundle supplies the exact runner as `.zip`; nondeterministic validator execution is not claimed. |
+| Frontend TypeScript                       | Passed with `bunx tsc --noEmit`.                                                                                                                                                                                                                                                                                                                                                                                |
+| Frontend Vitest                           | **91 tests passed** across 11 files, including malformed-registration, finalized-return, and wallet-agent verification regressions.                                                                                                                                                                                                                                                                             |
+| Frontend ESLint                           | Passed with 0 errors and 15 existing Fast Refresh warnings.                                                                                                                                                                                                                                                                                                                                                     |
+| Frontend Prettier                         | Passed with `bunx prettier --check .`.                                                                                                                                                                                                                                                                                                                                                                          |
+| Frontend production build                 | Passed with `bun run build`; Vite/Nitro emitted advisory chunk-size and configuration warnings only.                                                                                                                                                                                                                                                                                                            |
 
 The contract tests cover fixed funding, campaign and proposal lifecycle rules, ordered challenge resolution, evidence validation, authorization, pagination, claims, refunds, and accounting reconciliation. Frontend tests cover adapter parsing, sender-scoped reads, wallet-associated agent metadata, route/ID handling, forms, and transaction refresh behavior.
 

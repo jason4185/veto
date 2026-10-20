@@ -8,11 +8,11 @@ The remediation remains one VETO contract project. `docs/VETO_V2_ARCHITECTURE.md
 
 ## Executive status
 
-| PAPITO concern | Local result | Proof boundary |
-| --- | --- | --- |
-| Fabricated evidence | **Partially remediated locally; not closed as independent proof** | Objective rules are deterministic; semantic rules require a one-time on-chain authority record. The authority is an explicit trust root, not a claim of decentralized real-world truth. |
-| Owner/operator bypass | **Fixed locally; current interface read-verified** | One shared identity reservation map covers registration, replacement, retired operators, active status, participation, and direct wallet lookup. Person-level Sybil across unrelated wallets remains impossible to prevent here. |
-| GEN transfer safety | **Not closed** | All four paths emit external ghost messages. Synchronous exceptions occur before one-way accounting changes, but neither this contract nor the installed client exposes an authenticated external-delivery receipt or safe recovery path. Studio cannot model the live ghost layer. |
+| PAPITO concern        | Local result                                                      | Proof boundary                                                                                                                                                                                                                                                                      |
+| --------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fabricated evidence   | **Partially remediated locally; not closed as independent proof** | Objective rules are deterministic; semantic rules require a one-time on-chain authority record. The authority is an explicit trust root, not a claim of decentralized real-world truth.                                                                                             |
+| Owner/operator bypass | **Fixed locally; current interface read-verified**                | One shared identity reservation map covers registration, replacement, retired operators, active status, participation, and direct wallet lookup. Person-level Sybil across unrelated wallets remains impossible to prevent here.                                                    |
+| GEN transfer safety   | **Not closed**                                                    | All four paths emit external ghost messages. Synchronous exceptions occur before one-way accounting changes, but neither this contract nor the installed client exposes an authenticated external-delivery receipt or safe recovery path. Studio cannot model the live ghost layer. |
 
 ## 1. Evidence integrity
 
@@ -24,10 +24,10 @@ The vulnerable trust boundary was the submitter-controlled `evidence_url` accept
 
 ### Actual local fix
 
-* `MAX_PAYMENT_WEI:<decimal wei>` is parsed by `_policy_limit` (line 267), stored in `policy_limits` during `create_campaign`, and exposed as `limit_wei` / `policy_limit_wei`.
-* `evaluate_challenge` (line 715) takes the typed path without fetching evidence or asking the model. It compares the stored proposal payment to the immutable limit. A genuine `8 GEN > 5 GEN` violation is `VALID` with `evidence_status=DETERMINISTIC`; a false claim below the limit is `INVALID` even if its JSON says `violation: true`.
-* Semantic evaluation still uses `_semantic_consensus`, but `VALID` is reward-authorizing only when `publish_attestation` (line 654) was called by the configured deployment authority for the exact evidence digest and current snapshot. The snapshot includes chain ID, contract address, campaign/proposal IDs, recipient, payment amount, policy index/text, and typed limit. The key is one-time and the value is an expiry.
-* `evaluate_challenge` recomputes the fetched response hash and current snapshot. Changed content, wrong context, another proposal, expired records, duplicate records, or prompt injection cannot reuse an attestation. Without a matching current record, a model `VALID` is converted to `INVALID` with `AUTH_REQUIRED`; no reward becomes claimable.
+- `MAX_PAYMENT_WEI:<decimal wei>` is parsed by `_policy_limit` (line 267), stored in `policy_limits` during `create_campaign`, and exposed as `limit_wei` / `policy_limit_wei`.
+- `evaluate_challenge` (line 715) takes the typed path without fetching evidence or asking the model. It compares the stored proposal payment to the immutable limit. A genuine `8 GEN > 5 GEN` violation is `VALID` with `evidence_status=DETERMINISTIC`; a false claim below the limit is `INVALID` even if its JSON says `violation: true`.
+- Semantic evaluation still uses `_semantic_consensus`, but `VALID` is reward-authorizing only when `publish_attestation` (line 654) was called by the configured deployment authority for the exact evidence digest and current snapshot. The snapshot includes chain ID, contract address, campaign/proposal IDs, recipient, payment amount, policy index/text, and typed limit. The key is one-time and the value is an expiry.
+- `evaluate_challenge` recomputes the fetched response hash and current snapshot. Changed content, wrong context, another proposal, expired records, duplicate records, or prompt injection cannot reuse an attestation. Without a matching current record, a model `VALID` is converted to `INVALID` with `AUTH_REQUIRED`; no reward becomes claimable.
 
 The authority is deliberately not the campaign creator. This prevents a creator from self-attesting their own campaign, but it does not prevent a compromised or colluding deployment authority from attesting false facts. That is the remaining trust-root risk and must be covered operationally or by a future audited authority registry/verifier. No unsupported GenVM signature-recovery API is claimed.
 
