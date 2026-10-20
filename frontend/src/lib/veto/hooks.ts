@@ -5,6 +5,7 @@ import type { GenLayerClient } from "./client";
 import type { ContractWrite } from "./contract";
 import type { Challenge, Proposal } from "./domain";
 import { normalizeVetoError } from "./errors";
+import { rateLimitCooldownMs } from "./rpc";
 import {
   getAgent,
   getAgentCampaignClaimable,
@@ -195,13 +196,16 @@ export async function invalidateVetoQueries(queryClient: QueryClient, keys: Quer
 }
 export function shouldRetryVetoRead(failureCount: number, error: unknown) {
   const normalized = normalizeVetoError(error);
-  if (normalized.kind !== "rpc_unavailable") return false;
+  if (normalized.kind !== "rpc_unavailable" && normalized.kind !== "rate_limited") return false;
   return failureCount < 1;
 }
 const options = {
   retry: shouldRetryVetoRead,
-  retryDelay: (attempt: number) =>
-    Math.min(1_000 * 2 ** attempt, 5_000) + Math.floor(Math.random() * 250),
+  retryDelay: (attempt: number, error: unknown) => {
+    if (normalizeVetoError(error).kind === "rate_limited")
+      return Math.min(Math.max(rateLimitCooldownMs(error), 1_000), 120_000);
+    return Math.min(1_000 * 2 ** attempt, 5_000) + Math.floor(Math.random() * 250);
+  },
   staleTime: 30_000,
   gcTime: 10 * 60_000,
   refetchOnWindowFocus: false,
@@ -322,17 +326,20 @@ export function useAgent(id: string) {
   });
 }
 
+export function walletAgentQueryKey(address?: string, chainId?: number): QueryKey {
+  return vetoQueryKey(
+    "wallet-agent",
+    address?.toLowerCase() ?? "disconnected",
+    chainId ?? "unknown",
+  );
+}
+
 export function useWalletAgent(address?: string, chainId?: number) {
-  const rememberedId = readKnownAgentId(address);
   return useQuery({
-    queryKey: vetoQueryKey(
-      "wallet-agent",
-      address?.toLowerCase() ?? "disconnected",
-      chainId ?? "unknown",
-      rememberedId ?? "unremembered",
-    ),
+    queryKey: walletAgentQueryKey(address, chainId),
     queryFn: async () => {
       if (!address) return null;
+      const rememberedId = readKnownAgentId(address);
       const discovered = await discoverWalletAgent(address, rememberedId);
       if (discovered) {
         rememberKnownAgentId(address, discovered.agent.id);
@@ -343,9 +350,10 @@ export function useWalletAgent(address?: string, chainId?: number) {
     },
     enabled: enabled && Boolean(address) && chainId === chainConfig.chainId,
     ...options,
-    // Reconnects must re-check the live owner/operator mapping. The shared RPC
-    // layer still deduplicates simultaneous reads and there is no polling.
-    staleTime: 0,
+    // The key is stable across the local metadata write after discovery. This
+    // avoids a second lookup while still separating wallets and deployments.
+    // Results are cached briefly; wallet changes produce a different key.
+    staleTime: 30_000,
     refetchInterval: false,
     refetchOnWindowFocus: false,
   });

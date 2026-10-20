@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { invalidationKeysForWrite, shouldRetryVetoRead, vetoQueryKey } from "./hooks";
+import { rememberKnownAgentId } from "./agent-memory";
+import {
+  invalidationKeysForWrite,
+  shouldRetryVetoRead,
+  vetoQueryKey,
+  walletAgentQueryKey,
+} from "./hooks";
 import { addProposalWrite, submitChallengeWrite } from "./contract";
 
 describe("VETO query identity and retry policy", () => {
@@ -18,27 +24,25 @@ describe("VETO query identity and retry policy", () => {
   });
 
   it("isolates automatic agent recognition when the wallet changes", () => {
-    const owner = vetoQueryKey(
-      "wallet-agent",
-      "0x1111111111111111111111111111111111111111",
-      61997,
-      "1",
-    );
-    const operator = vetoQueryKey(
-      "wallet-agent",
-      "0x2222222222222222222222222222222222222222",
-      61997,
-      "1",
-    );
-    const refreshed = vetoQueryKey(
-      "wallet-agent",
-      "0x1111111111111111111111111111111111111111",
-      61997,
-      "2",
-    );
+    const owner = walletAgentQueryKey("0x1111111111111111111111111111111111111111", 61997);
+    const operator = walletAgentQueryKey("0x2222222222222222222222222222222222222222", 61997);
+    const refreshed = walletAgentQueryKey("0x1111111111111111111111111111111111111111", 61997);
 
     expect(owner).not.toEqual(operator);
-    expect(owner).not.toEqual(refreshed);
+    expect(owner).toEqual(refreshed);
+  });
+
+  it("does not change the query identity when fresh discovery writes local metadata", () => {
+    const address = "0xC8Ba5DA455b011863F2ECa76a6fa21E62Cc91B87";
+    const before = walletAgentQueryKey(address, 61997);
+    expect(
+      rememberKnownAgentId(address, "1", {
+        chainId: 61997,
+        contractAddress: "0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd",
+      }),
+    ).toBe(true);
+    expect(walletAgentQueryKey(address, 61997)).toEqual(before);
+    localStorage.clear();
   });
 
   it("retries transient RPC failures but not contract-state failures", () => {
@@ -48,6 +52,9 @@ describe("VETO query identity and retry policy", () => {
       true,
     );
     expect(shouldRetryVetoRead(0, new Error("Rate limit exceeded: 30 requests per minute"))).toBe(
+      true,
+    );
+    expect(shouldRetryVetoRead(1, new Error("Rate limit exceeded: 30 requests per minute"))).toBe(
       false,
     );
     expect(shouldRetryVetoRead(2, new Error("request timed out"))).toBe(false);

@@ -53,6 +53,12 @@ vi.mock("@/lib/veto/wallet", () => ({
 vi.mock("@/lib/veto/hooks", () => ({
   invalidateVetoQueries: mocks.invalidateVetoQueries,
   invalidationKeysForWrite: () => [],
+  walletAgentQueryKey: (address?: string, chainId?: number) => [
+    "veto",
+    "wallet-agent",
+    address?.toLowerCase() ?? "disconnected",
+    chainId ?? "unknown",
+  ],
   useVetoConfig: () => ({
     data: {
       protocol: "VETO V1",

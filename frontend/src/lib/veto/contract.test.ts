@@ -19,6 +19,7 @@ import {
 } from "./contract";
 import { VetoReadError } from "./errors";
 import { vetoContractAddress } from "./network";
+import { resetVetoRpcDiagnostics } from "./rpc";
 
 describe("VETO contract write adapter", () => {
   it("always encodes explicit operator and payout addresses", () => {
@@ -386,6 +387,19 @@ describe("VETO public read adapter", () => {
     await expect(discoverWalletAgent(creator, undefined, client as never)).resolves.toBeNull();
     expect(client.request).not.toHaveBeenCalled();
     expect(client.readContract).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces wallet-lookup rate limits instead of reporting no agent", async () => {
+    const client = {
+      request: vi.fn(),
+      readContract: vi.fn().mockRejectedValue(new Error("HTTP 429: too many requests")),
+    };
+
+    await expect(discoverWalletAgent(creator, undefined, client as never)).rejects.toMatchObject({
+      name: "VetoReadError",
+      context: { method: "get_agent_by_wallet" },
+    });
+    resetVetoRpcDiagnostics();
   });
 
   it("preserves an unknown-agent contract error as a read failure", async () => {

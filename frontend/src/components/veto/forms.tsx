@@ -45,6 +45,7 @@ import {
   useProposal,
   useVetoConfig,
   useWalletAgent,
+  walletAgentQueryKey,
   invalidateVetoQueries,
   invalidationKeysForWrite,
 } from "@/lib/veto/hooks";
@@ -617,10 +618,6 @@ export function RegisterAgentForm() {
               onDone={async (id) => {
                 setTxId(id);
                 setWrite(null);
-                void invalidateVetoQueries(
-                  queryClient,
-                  invalidationKeysForWrite(write, queryClient),
-                );
                 const client = wallet.connectedClient;
                 if (!client) {
                   setError(
@@ -677,10 +674,10 @@ export function RegisterAgentForm() {
                       "Registration finalized, but this browser could not save the verified owner/operator association.",
                     );
                   }
-                  await invalidateVetoQueries(
-                    queryClient,
-                    invalidationKeysForWrite(write, queryClient),
-                  );
+                  queryClient.setQueryData(walletAgentQueryKey(wallet.address, wallet.chainId), {
+                    agent: registeredAgent,
+                    source: "onchain" as const,
+                  });
                   await navigate({ to: "/agent/$id", params: { id: agentId } });
                 } catch (reason) {
                   setError(
