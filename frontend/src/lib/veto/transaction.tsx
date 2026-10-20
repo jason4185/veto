@@ -22,6 +22,7 @@ import type { ContractWrite } from "./contract";
 import { normalizeVetoError } from "./errors";
 import { explorerTransactionUrl } from "./network";
 import {
+  pendingScope,
   rememberPendingTransaction,
   watchPendingTransaction,
   type PendingTransaction,
@@ -35,30 +36,97 @@ const transferMethods = new Set([
   "claim_campaign_remainder",
 ]);
 
+function record(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function text(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim()) return value.trim();
+  const item = record(value);
+  if (!item) return undefined;
+  for (const key of ["message", "reason", "error", "revertReason"]) {
+    const detail = text(item[key]);
+    if (detail) return detail;
+  }
+  return undefined;
+}
+
+/** Extract only explicit protocol error fields; status names are not reasons. */
+export function transactionFailureDetail(value: unknown): string | undefined {
+  const item = record(value);
+  if (!item) return undefined;
+  for (const key of ["error", "reason", "revertReason", "errorMessage"]) {
+    const detail = text(item[key]);
+    if (detail) return detail;
+  }
+  const resultText = text(item["result"]);
+  if (resultText) return resultText;
+  const consensus = record(item["consensus_data"]);
+  const receipts = consensus?.["leader_receipt"];
+  if (Array.isArray(receipts)) {
+    for (const receipt of receipts) {
+      const receiptItem = record(receipt);
+      const detail = text(receiptItem?.["error"]);
+      if (detail) return detail;
+      const result = record(receiptItem?.["result"]);
+      if (result?.["status"] === "contract_error") {
+        const payload = text(result["payload"]);
+        if (payload) return payload;
+      }
+    }
+  }
+  return undefined;
+}
+
+function executionFailureLabel(...values: unknown[]) {
+  return (
+    values.map(transactionFailureDetail).find((value): value is string => Boolean(value)) ??
+    values
+      .map((value) => {
+        const item = record(value);
+        return (
+          item?.["executionResultName"] ?? item?.["txExecutionResultName"] ?? item?.["statusName"]
+        );
+      })
+      .find((value): value is string => typeof value === "string" && value.length > 0) ??
+    "unknown outcome"
+  );
+}
+
 export async function verifySuccessfulTransaction(status: TrackedStatus, client: GenLayerClient) {
   if (!status.genlayerTxId) throw new Error("Studio Next did not return a transaction ID.");
-  if (status.successful === false)
-    throw new Error(
-      `Transaction execution failed: ${status.executionResultName ?? status.statusName ?? "unknown outcome"}.`,
-    );
+  if (status.successful === false) {
+    let receipt: unknown;
+    try {
+      receipt = await getVetoTransaction(client, status.genlayerTxId);
+    } catch {
+      // The status result remains authoritative when a follow-up receipt read is unavailable.
+    }
+    throw new Error(`Transaction execution failed: ${executionFailureLabel(status, receipt)}.`);
+  }
   const result = await getVetoTransaction(client, status.genlayerTxId);
   if (status.phase !== "finalized" || !isSuccessful(result))
-    throw new Error(
-      `Transaction is not finalized successfully: ${result.txExecutionResultName ?? result.statusName ?? "unknown outcome"}.`,
-    );
+    throw new Error(`Transaction is not finalized successfully: ${executionFailureLabel(result)}.`);
   return status.genlayerTxId;
 }
 
 export async function verifySuccessfulDecision(status: TrackedStatus, client: GenLayerClient) {
   if (!status.genlayerTxId) throw new Error("Studio Next did not return a transaction ID.");
-  if (status.successful === false)
-    throw new Error(
-      `Transaction execution failed: ${status.executionResultName ?? status.statusName ?? "unknown outcome"}.`,
-    );
+  if (status.successful === false) {
+    let receipt: unknown;
+    try {
+      receipt = await getVetoTransaction(client, status.genlayerTxId);
+    } catch {
+      // The status result remains authoritative when a follow-up receipt read is unavailable.
+    }
+    throw new Error(`Transaction execution failed: ${executionFailureLabel(status, receipt)}.`);
+  }
   const result = await getVetoTransaction(client, status.genlayerTxId);
   if (!isSuccessful(result) || result.statusName !== "ACCEPTED")
     throw new Error(
-      `GenLayer did not confirm a successful accepted execution: ${result.txExecutionResultName ?? result.statusName ?? "unknown outcome"}.`,
+      `GenLayer did not confirm a successful accepted execution: ${executionFailureLabel(result)}.`,
     );
   return status.genlayerTxId;
 }
@@ -223,6 +291,8 @@ export function TransactionRunner({
   onError,
   onDismiss,
   onAccepted,
+  onSubmitted,
+  onFinalityError,
   label = "Continue",
 }: {
   kit: TransactionKit;
@@ -232,6 +302,8 @@ export function TransactionRunner({
   onError: (error: Error) => void;
   onDismiss?: () => void;
   onAccepted?: (txId: string, status: TrackedStatus) => void | Promise<void>;
+  onSubmitted?: (txId: string, status: TrackedStatus) => void | Promise<void>;
+  onFinalityError?: (error: Error) => void;
   label?: string;
 }) {
   const argsKey = write.args.map(String).join("|");
@@ -257,6 +329,8 @@ export function TransactionRunner({
     useState<ReturnType<typeof normalizeVetoError>>();
   const handled = useRef("");
   const persisted = useRef("");
+  const submittedHandled = useRef("");
+  const errorHandled = useRef("");
   const finalizedHandled = useRef("");
   const [acceptedStatus, setAcceptedStatus] = useState<TrackedStatus>();
   const [backgroundStatus, setBackgroundStatus] = useState<TrackedStatus>();
@@ -268,8 +342,18 @@ export function TransactionRunner({
     const id = state.status.genlayerTxId;
     if (persisted.current === id) return;
     persisted.current = id;
-    rememberPendingTransaction(id, write.method, state.status, write.args);
-  }, [state, write.args, write.method]);
+    rememberPendingTransaction(
+      id,
+      write.method,
+      state.status,
+      write.args,
+      pendingScope(client.account?.address),
+    );
+    if (submittedHandled.current !== id) {
+      submittedHandled.current = id;
+      void onSubmitted?.(id, state.status);
+    }
+  }, [client.account?.address, onSubmitted, state, write.args, write.method]);
 
   useEffect(() => {
     if (!acceptedStatus?.genlayerTxId) return;
@@ -285,6 +369,11 @@ export function TransactionRunner({
         : {}),
       ...(acceptedStatus.successful === undefined ? {} : { successful: acceptedStatus.successful }),
       args: write.args,
+      scope: pendingScope(client.account?.address) ?? {
+        chainId: 61997,
+        contractAddress: "unknown",
+        sender: "unknown",
+      },
     };
     return watchPendingTransaction(record, transactionKit, client, {
       onStatus: (status) => {
@@ -299,15 +388,44 @@ export function TransactionRunner({
           setFinalityError(normalizeVetoError(reason)),
         );
       },
-      onError: (reason) => setFinalityError(normalizeVetoError(reason)),
+      onError: (reason) => {
+        const error = normalizeVetoError(reason);
+        setFinalityError(error);
+        onFinalityError?.(error);
+      },
     });
-  }, [acceptedStatus, client, onSuccess, transactionKit, write.args, write.method]);
+  }, [
+    acceptedStatus,
+    client,
+    onFinalityError,
+    onSuccess,
+    transactionKit,
+    write.args,
+    write.method,
+  ]);
 
   useEffect(() => {
     if (state.step === "error") {
       const error = normalizeVetoError(state.message);
-      onError(error);
-      onDismiss?.();
+      const errorStatus = (state as { status?: TrackedStatus }).status;
+      const id = errorStatus?.genlayerTxId;
+      const key = `${id ?? "no-id"}:${String(state.message)}`;
+      if (errorHandled.current === key) return;
+      errorHandled.current = key;
+      const deliver = (next: Error) => {
+        onError(next);
+        onDismiss?.();
+      };
+      if (id && errorStatus?.successful === false) {
+        void getVetoTransaction(client, id)
+          .then((receipt) => {
+            const detail = transactionFailureDetail(receipt);
+            deliver(detail ? new Error(`${String(state.message)}: ${detail}`) : error);
+          })
+          .catch(() => deliver(error));
+      } else {
+        deliver(error);
+      }
       return;
     }
     if (
@@ -319,7 +437,13 @@ export function TransactionRunner({
     handled.current = state.status.genlayerTxId;
     void verifySuccessfulDecision(state.status, client)
       .then(async (id) => {
-        rememberPendingTransaction(id, write.method, state.status, write.args);
+        rememberPendingTransaction(
+          id,
+          write.method,
+          state.status,
+          write.args,
+          pendingScope(client.account?.address),
+        );
         setAcceptedStatus(state.status);
         setBackgroundStatus(state.status);
         await onAccepted?.(id, state.status);
@@ -333,6 +457,7 @@ export function TransactionRunner({
   const retry = () => {
     setVerificationError(undefined);
     handled.current = "";
+    errorHandled.current = "";
     flow.reset();
   };
   const error =

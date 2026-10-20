@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ContractWrite } from "@/lib/veto/contract";
 import { readKnownAgentId, rememberKnownAgentId } from "@/lib/veto/agent-memory";
-import { rememberPendingTransaction } from "@/lib/veto/pending";
+import { pendingScope, rememberPendingTransaction } from "@/lib/veto/pending";
 import { ChallengeForm, CreatorForm, FundedProposalForm, UpdateAgentForm } from "./forms";
 
 vi.mock("@tanstack/react-router", () => ({
@@ -149,9 +149,17 @@ vi.mock("@/lib/veto/transaction", () => ({
   TransactionRunner: ({
     write,
     onSuccess,
+    onError,
+    onSubmitted,
+    onAccepted,
+    onFinalityError,
   }: {
     write: ContractWrite;
     onSuccess?: (txId: string) => void | Promise<void>;
+    onError?: (error: Error) => void;
+    onSubmitted?: (txId: string, status: never) => void | Promise<void>;
+    onAccepted?: (txId: string, status: never) => void | Promise<void>;
+    onFinalityError?: (error: Error) => void;
   }) => {
     mocks.lastWrite = write;
     return (
@@ -160,6 +168,29 @@ vi.mock("@/lib/veto/transaction", () => ({
         {onSuccess && (
           <button type="button" onClick={() => void onSuccess("0xregistration")}>
             Finalize transaction
+          </button>
+        )}
+        {onSubmitted && (
+          <button type="button" onClick={() => void onSubmitted("0xsubmitted", {} as never)}>
+            Submit transaction
+          </button>
+        )}
+        {onAccepted && (
+          <button type="button" onClick={() => void onAccepted("0xaccepted", {} as never)}>
+            Accept transaction
+          </button>
+        )}
+        {onError && (
+          <button
+            type="button"
+            onClick={() => onError(new Error("[EXPECTED] operator already used"))}
+          >
+            Revert transaction
+          </button>
+        )}
+        {onFinalityError && (
+          <button type="button" onClick={() => onFinalityError(new Error("RPC timeout"))}>
+            Fail finality
           </button>
         )}
       </div>
@@ -278,13 +309,19 @@ describe("CreatorForm funding action", () => {
   });
 
   it("blocks a second campaign funding attempt while a previous transaction is pending", () => {
-    rememberPendingTransaction("0x9999", "create_campaign", {
-      phase: "decided",
-      genlayerTxId: "0x9999",
-      statusName: "ACCEPTED",
-      executionResultName: "FINISHED_WITH_RETURN",
-      successful: true,
-    });
+    rememberPendingTransaction(
+      "0x9999",
+      "create_campaign",
+      {
+        phase: "decided",
+        genlayerTxId: "0x9999",
+        statusName: "ACCEPTED",
+        executionResultName: "FINISHED_WITH_RETURN",
+        successful: true,
+      },
+      [],
+      pendingScope(mocks.wallet.address, mocks.wallet.chainId),
+    );
     renderCreator();
     prepareReview();
 
@@ -401,6 +438,109 @@ describe("ChallengeForm automatic agent selection", () => {
 });
 
 describe("RegisterAgentForm finalized navigation", () => {
+  function prepareAgentReview(operator = "") {
+    fireEvent.change(screen.getByLabelText("Agent name"), {
+      target: { value: "Attempted agent" },
+    });
+    fireEvent.change(screen.getByLabelText("Agent description"), {
+      target: { value: "Registration feedback test." },
+    });
+    if (operator)
+      fireEvent.change(screen.getByLabelText("Operator address"), {
+        target: { value: operator },
+      });
+    fireEvent.click(screen.getByRole("button", { name: "Review registration" }));
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Register agent" }));
+  }
+
+  it("labels an operator collision as a contract rejection, not an unsubmitted review", async () => {
+    const { RegisterAgentForm } = await import("./forms");
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <RegisterAgentForm />
+      </QueryClientProvider>,
+    );
+    prepareAgentReview("0x2222222222222222222222222222222222222222");
+    fireEvent.click(screen.getByRole("button", { name: "Revert transaction" }));
+
+    expect(
+      await screen.findByText("That operator address is already assigned to another agent."),
+    ).toBeVisible();
+    expect(screen.getByText("REGISTRATION REJECTED BY CONTRACT")).toBeVisible();
+    expect(screen.queryByText("REGISTRATION REVIEW · NOT SUBMITTED")).not.toBeInTheDocument();
+  });
+
+  it("keeps submitted and accepted states attached to the same transaction ID", async () => {
+    const { RegisterAgentForm } = await import("./forms");
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <RegisterAgentForm />
+      </QueryClientProvider>,
+    );
+    prepareAgentReview();
+
+    fireEvent.click(screen.getByRole("button", { name: "Submit transaction" }));
+    expect(screen.getByText("REGISTRATION TRANSACTION · SUBMITTED")).toBeVisible();
+    expect(screen.getByText(/Transaction ID: 0xsubmitted/)).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Accept transaction" }));
+    expect(
+      screen.getByText("REGISTRATION TRANSACTION · ACCEPTED — AWAITING FINALITY"),
+    ).toBeVisible();
+    expect(screen.getByText(/Transaction ID: 0xaccepted/)).toBeVisible();
+  });
+
+  it("does not convert a post-finality verification read failure into a contract revert", async () => {
+    const connectedClient = {
+      getTransaction: vi.fn().mockResolvedValue({ result: 1 }),
+    };
+    mocks.wallet.connectedClient = connectedClient;
+    const { RegisterAgentForm } = await import("./forms");
+    render(
+      <QueryClientProvider client={new QueryClient()}>
+        <RegisterAgentForm />
+      </QueryClientProvider>,
+    );
+    prepareAgentReview();
+    fireEvent.click(await screen.findByRole("button", { name: "Finalize transaction" }));
+
+    expect(await screen.findByText("REGISTRATION FINALIZED · VERIFICATION FAILED")).toBeVisible();
+    expect(
+      screen.getAllByText(/the transaction result could not be reconciled with contract state/i),
+    ).not.toHaveLength(0);
+    expect(
+      screen.queryByText(
+        "The transaction reached GenLayer but the contract did not execute it successfully.",
+      ),
+    ).not.toBeInTheDocument();
+  });
+
+  it("clears a rejected registration error when the connected wallet changes", async () => {
+    const { RegisterAgentForm } = await import("./forms");
+    const view = render(
+      <QueryClientProvider client={new QueryClient()}>
+        <RegisterAgentForm />
+      </QueryClientProvider>,
+    );
+    prepareAgentReview("0x2222222222222222222222222222222222222222");
+    fireEvent.click(screen.getByRole("button", { name: "Revert transaction" }));
+    expect(
+      await screen.findByText("That operator address is already assigned to another agent."),
+    ).toBeVisible();
+
+    mocks.wallet.address = "0x3333333333333333333333333333333333333333";
+    view.rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <RegisterAgentForm />
+      </QueryClientProvider>,
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByText("That operator address is already assigned to another agent."),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
   it("verifies the returned agent ID before navigating to its profile", async () => {
     const connectedClient = {
       getTransaction: vi.fn().mockResolvedValue({ result: 1 }),

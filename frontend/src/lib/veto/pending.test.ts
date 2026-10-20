@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   readPendingTransactions,
   rememberPendingTransaction,
+  filterPendingTransactions,
+  pendingScope,
   watchPendingTransaction,
 } from "./pending";
 
@@ -17,6 +19,37 @@ beforeEach(() => {
 });
 
 describe("background transaction finality monitoring", () => {
+  it("ignores legacy unscoped pending metadata after the storage schema change", () => {
+    localStorage.setItem(
+      "veto.pending-transactions.v1",
+      JSON.stringify([{ id: "0xdead", method: "register_agent", submittedAt: Date.now() }]),
+    );
+    expect(readPendingTransactions()).toEqual([]);
+  });
+
+  it("does not surface another deployment or wallet's pending transaction", () => {
+    const otherWallet = "0x2222222222222222222222222222222222222222";
+    const currentWallet = "0x1111111111111111111111111111111111111111";
+    rememberPendingTransaction(
+      "0xaaaa",
+      "register_agent",
+      status({}),
+      [],
+      pendingScope(otherWallet),
+    );
+    rememberPendingTransaction("0xbbbb", "create_campaign", status({}), [], {
+      chainId: 61997,
+      contractAddress: "0x0000000000000000000000000000000000000002",
+      sender: currentWallet,
+    });
+    expect(
+      filterPendingTransactions(readPendingTransactions(), pendingScope(currentWallet)),
+    ).toEqual([]);
+    expect(
+      filterPendingTransactions(readPendingTransactions(), pendingScope(otherWallet)),
+    ).toHaveLength(1);
+  });
+
   it("continues through appeal/recomputation and removes only finalized success", async () => {
     const updates: TrackedStatus[] = [];
     const final = status({

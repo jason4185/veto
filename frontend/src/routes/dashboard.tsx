@@ -18,7 +18,7 @@ import { campaignLabel, connectionState, formatGen, integrationMessage } from "@
 import { simpleWrite } from "@/lib/veto/contract";
 import { useAccounting, useMyCampaigns, useWalletAgent } from "@/lib/veto/hooks";
 import { useWallet } from "@/lib/veto/wallet";
-import { usePendingTransactions } from "@/lib/veto/pending";
+import { pendingScope, usePendingTransactions } from "@/lib/veto/pending";
 import { pageHead } from "@/lib/veto/metadata";
 
 export const Route = createFileRoute("/dashboard")({
@@ -37,7 +37,7 @@ function Dashboard() {
   const campaignsQuery = useMyCampaigns(page * 50, 50, wallet.address, wallet.connectedClient);
   const accountingQuery = useAccounting();
   const walletAgentQuery = useWalletAgent(wallet.address, wallet.chainId);
-  const pendingTransactions = usePendingTransactions();
+  const pendingTransactions = usePendingTransactions(pendingScope(wallet.address, wallet.chainId));
   const campaigns = campaignsQuery.data?.items ?? [];
   const campaignCreationPending = pendingTransactions.some(
     (record) => record.method === "create_campaign",

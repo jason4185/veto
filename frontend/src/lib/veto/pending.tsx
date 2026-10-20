@@ -1,14 +1,24 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import type { TrackedStatus, TransactionKit } from "@genlayer/transaction-kit";
 import { isSuccessful } from "genlayer-js";
 import { explorerTransactionUrl, vetoContractAddress } from "./network";
+import { STUDIO_NEXT_CHAIN_ID } from "./domain";
 import { getVetoTransaction, type GenLayerClient } from "./client";
 import { useWallet } from "./wallet";
 import { invalidateVetoQueries, invalidationKeysForWrite } from "./hooks";
 import { isRpcRateLimitError, rateLimitCooldownMs } from "./rpc";
 
-const STORAGE_KEY = "veto.pending-transactions.v1";
+// v1 records did not identify the deployment or sender. They are deliberately
+// not read by v2 so an old browser cannot label another wallet's transaction as
+// the current wallet's finality state.
+const STORAGE_KEY = "veto.pending-transactions.v2";
+
+export type PendingScope = {
+  chainId: number;
+  contractAddress: string;
+  sender: string;
+};
 
 export type PendingTransaction = {
   id: `0x${string}`;
@@ -19,6 +29,7 @@ export type PendingTransaction = {
   executionResultName?: string;
   successful?: boolean;
   args?: unknown[];
+  scope: PendingScope;
 };
 
 type Listener = {
@@ -33,6 +44,31 @@ const activeMonitors = new Map<string, Promise<void>>();
 const monitorRetryTimers = new Map<string, ReturnType<typeof setTimeout>>();
 const monitorRetryCounts = new Map<string, number>();
 const MAX_RATE_LIMIT_RETRIES = 5;
+
+function protocolFailureDetail(value: unknown): string | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const item = value as Record<string, unknown>;
+  for (const key of ["error", "reason", "revertReason", "errorMessage"]) {
+    if (typeof item[key] === "string" && item[key]) return item[key] as string;
+  }
+  if (typeof item["result"] === "string" && item["result"]) return item["result"] as string;
+  const consensus = item["consensus_data"];
+  if (!consensus || typeof consensus !== "object" || Array.isArray(consensus)) return undefined;
+  const receipts = (consensus as Record<string, unknown>)["leader_receipt"];
+  if (!Array.isArray(receipts)) return undefined;
+  for (const receipt of receipts) {
+    if (!receipt || typeof receipt !== "object" || Array.isArray(receipt)) continue;
+    const receiptItem = receipt as Record<string, unknown>;
+    if (typeof receiptItem["error"] === "string" && receiptItem["error"])
+      return receiptItem["error"] as string;
+    const result = receiptItem["result"];
+    if (!result || typeof result !== "object" || Array.isArray(result)) continue;
+    const resultItem = result as Record<string, unknown>;
+    if (resultItem["status"] === "contract_error" && typeof resultItem["payload"] === "string")
+      return resultItem["payload"] as string;
+  }
+  return undefined;
+}
 
 function notify() {
   subscribers.forEach((listener) => listener());
@@ -57,7 +93,17 @@ export function readPendingTransactions(): PendingTransaction[] {
         typeof (value as { submittedAt?: unknown }).submittedAt === "number" &&
         typeof (value as { phase?: unknown }).phase === "string" &&
         ((value as { args?: unknown }).args === undefined ||
-          Array.isArray((value as { args?: unknown }).args)),
+          Array.isArray((value as { args?: unknown }).args)) &&
+        (() => {
+          const scope = (value as { scope?: unknown }).scope;
+          return (
+            Boolean(scope) &&
+            typeof scope === "object" &&
+            typeof (scope as { chainId?: unknown }).chainId === "number" &&
+            typeof (scope as { contractAddress?: unknown }).contractAddress === "string" &&
+            typeof (scope as { sender?: unknown }).sender === "string"
+          );
+        })(),
     );
   } catch {
     return [];
@@ -80,6 +126,11 @@ export function rememberPendingTransaction(
   method: string,
   status: TrackedStatus,
   args: unknown[] = [],
+  scope: PendingScope = {
+    chainId: STUDIO_NEXT_CHAIN_ID,
+    contractAddress: vetoContractAddress.toLowerCase(),
+    sender: "unknown",
+  },
 ) {
   const records = readPendingTransactions();
   const next: PendingTransaction = {
@@ -91,6 +142,11 @@ export function rememberPendingTransaction(
     ...(status.executionResultName ? { executionResultName: status.executionResultName } : {}),
     ...(status.successful === undefined ? {} : { successful: status.successful }),
     args: args.map((value) => (typeof value === "bigint" ? value.toString() : value)),
+    scope: {
+      chainId: scope.chainId,
+      contractAddress: scope.contractAddress.toLowerCase(),
+      sender: scope.sender.toLowerCase(),
+    },
   };
   writePendingTransactions([next, ...records.filter((record) => record.id !== id)]);
 }
@@ -143,7 +199,7 @@ async function monitor(id: `0x${string}`, kit: TransactionKit, client: GenLayerC
     }
     if (!isSuccessful(transaction)) {
       throw new Error(
-        `Finalized transaction execution failed: ${transaction.txExecutionResultName ?? transaction.statusName ?? "unknown outcome"}.`,
+        `Finalized transaction execution failed: ${protocolFailureDetail(transaction) ?? transaction.txExecutionResultName ?? transaction.statusName ?? "unknown outcome"}.`,
       );
     }
     removePendingTransaction(id);
@@ -213,22 +269,60 @@ export function watchPendingTransaction(
   };
 }
 
-export function usePendingTransactions() {
-  const [records, setRecords] = useState(readPendingTransactions);
+function matchesScope(record: PendingTransaction, scope?: PendingScope) {
+  if (!scope) return true;
+  return (
+    record.scope.chainId === scope.chainId &&
+    record.scope.contractAddress === scope.contractAddress.toLowerCase() &&
+    record.scope.sender === scope.sender.toLowerCase()
+  );
+}
+
+export function pendingScope(
+  sender?: string,
+  chainId = STUDIO_NEXT_CHAIN_ID,
+): PendingScope | undefined {
+  if (!sender) return undefined;
+  return {
+    chainId,
+    contractAddress: vetoContractAddress.toLowerCase(),
+    sender: sender.toLowerCase(),
+  };
+}
+
+export function filterPendingTransactions(records: PendingTransaction[], scope?: PendingScope) {
+  return records.filter((record) => matchesScope(record, scope));
+}
+
+export function usePendingTransactions(scope?: PendingScope) {
+  const scopeChainId = scope?.chainId;
+  const scopeContractAddress = scope?.contractAddress;
+  const scopeSender = scope?.sender;
+  const read = useCallback(
+    () =>
+      filterPendingTransactions(
+        readPendingTransactions(),
+        scopeChainId === undefined || !scopeContractAddress || !scopeSender
+          ? undefined
+          : { chainId: scopeChainId, contractAddress: scopeContractAddress, sender: scopeSender },
+      ),
+    [scopeChainId, scopeContractAddress, scopeSender],
+  );
+  const [records, setRecords] = useState(read);
   useEffect(() => {
-    const refresh = () => setRecords(readPendingTransactions());
+    const refresh = () => setRecords(read);
     subscribers.add(refresh);
     return () => {
       subscribers.delete(refresh);
     };
-  }, []);
+  }, [read]);
   return records;
 }
 
 export function PendingTransactionMonitor() {
   const wallet = useWallet();
   const queryClient = useQueryClient();
-  const records = usePendingTransactions();
+  const records = usePendingTransactions(pendingScope(wallet.address, wallet.chainId));
   const recordsRef = useRef(records);
   recordsRef.current = records;
   const recordKey = records.map((record) => record.id).join("|");
@@ -271,6 +365,9 @@ export function PendingTransactionMonitor() {
       <strong className="text-foreground">GenLayer finality pending.</strong>{" "}
       {records.length === 1 ? "One transaction" : `${records.length} transactions`} continue in the
       background.{" "}
+      <span className="block mt-1 text-muted-foreground">
+        Current wallet · {first.method} · <code>{first.id}</code>
+      </span>{" "}
       <a
         className="text-link"
         href={explorerTransactionUrl(first.id)}

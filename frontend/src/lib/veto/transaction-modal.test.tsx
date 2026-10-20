@@ -38,6 +38,11 @@ vi.mock("@genlayer/transaction-kit-react", () => ({
 vi.mock("./pending", () => ({
   watchPendingTransaction: mocks.watchPendingTransaction,
   rememberPendingTransaction: mocks.rememberPendingTransaction,
+  pendingScope: () => ({
+    chainId: 61997,
+    contractAddress: "0x0000000000000000000000000000000000000001",
+    sender: "0x1111111111111111111111111111111111111111",
+  }),
 }));
 
 beforeEach(() => {

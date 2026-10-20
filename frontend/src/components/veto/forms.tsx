@@ -1,4 +1,5 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from "react";
+import type { TrackedStatus } from "@genlayer/transaction-kit";
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useQueryClient } from "@tanstack/react-query";
 import { ArrowRight, ArrowUpRight, ShieldCheck, LockKeyhole } from "lucide-react";
@@ -50,7 +51,7 @@ import {
   invalidationKeysForWrite,
 } from "@/lib/veto/hooks";
 import { useWallet } from "@/lib/veto/wallet";
-import { usePendingTransactions } from "@/lib/veto/pending";
+import { pendingScope, usePendingTransactions } from "@/lib/veto/pending";
 import { TransactionRunner, transactionResultId } from "@/lib/veto/transaction";
 import { getVetoTransaction } from "@/lib/veto/client";
 import { forgetKnownAgentId, rememberVerifiedAgent } from "@/lib/veto/agent-memory";
@@ -63,6 +64,7 @@ import {
   ReadLoading,
   ReadNotFound,
 } from "./shared";
+import { normalizeVetoError, VetoError } from "@/lib/veto/errors";
 
 function Field({
   label,
@@ -106,12 +108,18 @@ function WriteRunner({
   onDone,
   onError,
   onDismiss,
+  onSubmitted,
+  onAccepted,
+  onFinalityError,
 }: {
   write: ContractWrite | null;
   label: string;
   onDone: (txId: string) => void | Promise<void>;
   onError: (error: Error) => void;
   onDismiss?: () => void;
+  onSubmitted?: (txId: string, status: TrackedStatus) => void | Promise<void>;
+  onAccepted?: (txId: string, status: TrackedStatus) => void | Promise<void>;
+  onFinalityError?: (error: Error) => void;
 }) {
   const wallet = useWallet();
   if (!write || !wallet.kit || !wallet.connectedClient) return null;
@@ -123,6 +131,9 @@ function WriteRunner({
       label={label}
       onSuccess={onDone}
       onError={onError}
+      {...(onSubmitted ? { onSubmitted } : {})}
+      {...(onAccepted ? { onAccepted } : {})}
+      {...(onFinalityError ? { onFinalityError } : {})}
       {...(onDismiss ? { onDismiss } : {})}
     />
   );
@@ -140,7 +151,7 @@ export function CreatorForm() {
   const wallet = useWallet();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
-  const pendingTransactions = usePendingTransactions();
+  const pendingTransactions = usePendingTransactions(pendingScope(wallet.address, wallet.chainId));
   const fundingPending = pendingTransactions.some((record) => record.method === "create_campaign");
   const configQuery = useVetoConfig();
   const config = configQuery.data;
@@ -481,6 +492,18 @@ export function CreatorForm() {
 }
 
 export function RegisterAgentForm() {
+  type RegistrationStatus =
+    | "idle"
+    | "review"
+    | "awaiting_approval"
+    | "submitted"
+    | "accepted"
+    | "finalized_verifying"
+    | "finalized_success"
+    | "contract_rejected"
+    | "transaction_failed"
+    | "rpc_error"
+    | "verification_failed";
   const wallet = useWallet();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
@@ -494,14 +517,52 @@ export function RegisterAgentForm() {
   const [confirmed, setConfirmed] = useState(false);
   const [write, setWrite] = useState<ContractWrite | null>(null);
   const [txId, setTxId] = useState("");
+  const [registrationStatus, setRegistrationStatus] = useState<RegistrationStatus>("idle");
+  const statusLabel: Record<RegistrationStatus, string> = {
+    idle: "REGISTRATION",
+    review: "REGISTRATION REVIEW · NOT SUBMITTED",
+    awaiting_approval: "REGISTRATION TRANSACTION · AWAITING WALLET APPROVAL",
+    submitted: "REGISTRATION TRANSACTION · SUBMITTED",
+    accepted: "REGISTRATION TRANSACTION · ACCEPTED — AWAITING FINALITY",
+    finalized_verifying: "REGISTRATION FINALIZED · VERIFYING ON-CHAIN STATE",
+    finalized_success: "REGISTRATION FINALIZED · VERIFIED",
+    contract_rejected: "REGISTRATION REJECTED BY CONTRACT",
+    transaction_failed: "REGISTRATION TRANSACTION FAILED",
+    rpc_error: "REGISTRATION STATUS UNAVAILABLE",
+    verification_failed: "REGISTRATION FINALIZED · VERIFICATION FAILED",
+  };
+  const registrationFailureStatus = (reason: unknown): RegistrationStatus => {
+    const kind = normalizeVetoError(reason).kind;
+    if (kind === "wallet_rejected") return "review";
+    if (kind === "rate_limited" || kind === "rpc_unavailable" || kind === "configuration")
+      return "rpc_error";
+    if (kind === "authorization" || kind === "contract_state" || kind === "validation")
+      return "contract_rejected";
+    if (kind === "insufficient_gen" || kind === "unknown") return "transaction_failed";
+    return "transaction_failed";
+  };
+  const finalizedVerificationError = (message: string, reason?: unknown) => {
+    const normalized = reason ? normalizeVetoError(reason) : undefined;
+    return new VetoError(
+      message,
+      normalized?.kind ?? "contract_state",
+      normalized?.technicalMessage ?? message,
+      "Keep the transaction hash and retry the authoritative on-chain verification read.",
+    );
+  };
   useEffect(() => {
     setReview(undefined);
     setConfirmed(false);
     setWrite(null);
+    setError(undefined);
+    setTxId("");
+    setRegistrationStatus("idle");
   }, [wallet.address]);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setError("");
+    setError(undefined);
+    setTxId("");
+    setWrite(null);
     const form = new FormData(event.currentTarget);
     const name = String(form.get("name") ?? "").trim();
     const description = String(form.get("description") ?? "").trim();
@@ -522,6 +583,7 @@ export function RegisterAgentForm() {
       payout: payout || wallet.address,
     });
     setConfirmed(false);
+    setRegistrationStatus("review");
   };
   return (
     <div className="form-layout">
@@ -568,7 +630,7 @@ export function RegisterAgentForm() {
         </Button>
         {review && (
           <section className="review">
-            <p className="eyebrow">REGISTRATION REVIEW · NOT SUBMITTED</p>
+            <p className="eyebrow">{statusLabel[registrationStatus]}</p>
             <h3 className="mt-4">{review.name}</h3>
             <dl>
               <dt>Owner</dt>
@@ -595,8 +657,10 @@ export function RegisterAgentForm() {
             </label>
             <Button
               type="button"
-              disabled={!confirmed || !canWrite(wallet)}
-              onClick={() =>
+              disabled={!confirmed || !canWrite(wallet) || Boolean(write)}
+              onClick={() => {
+                setError(undefined);
+                setRegistrationStatus("awaiting_approval");
                 setWrite(
                   registerAgentWrite(
                     review.name,
@@ -604,30 +668,52 @@ export function RegisterAgentForm() {
                     review.operator,
                     review.payout,
                   ),
-                )
-              }
+                );
+              }}
             >
-              {canWrite(wallet) ? "Register agent" : "Connect contract and wallet"}
+              {write
+                ? "Registration in progress"
+                : canWrite(wallet)
+                  ? "Register agent"
+                  : "Connect contract and wallet"}
             </Button>
             {txId && (
-              <p className="text-xs text-muted-foreground mt-4">Transaction finalized: {txId}</p>
+              <p className="text-xs text-muted-foreground mt-4">
+                Transaction {registrationStatus === "finalized_success" ? "finalized" : "ID"}:{" "}
+                {txId}
+              </p>
             )}
             <WriteRunner
               write={write}
               label="Register agent"
+              onSubmitted={(id) => {
+                setTxId(id);
+                setRegistrationStatus("submitted");
+              }}
+              onAccepted={(id) => {
+                setTxId(id);
+                setRegistrationStatus("accepted");
+              }}
               onDone={async (id) => {
                 setTxId(id);
+                setRegistrationStatus("finalized_verifying");
                 setWrite(null);
                 const client = wallet.connectedClient;
                 if (!client) {
+                  setRegistrationStatus("verification_failed");
                   setError(
-                    "Registration finalized, but the wallet client disconnected before the new agent ID could be verified.",
+                    finalizedVerificationError(
+                      "Registration finalized, but the wallet client disconnected before the new agent ID could be verified.",
+                    ),
                   );
                   return;
                 }
                 if (!wallet.address) {
+                  setRegistrationStatus("verification_failed");
                   setError(
-                    "Registration finalized, but the owner wallet disconnected before the new agent could be verified.",
+                    finalizedVerificationError(
+                      "Registration finalized, but the owner wallet disconnected before the new agent could be verified.",
+                    ),
                   );
                   return;
                 }
@@ -642,21 +728,30 @@ export function RegisterAgentForm() {
                     agentId = returnedAgentId;
                   }
                   if (!agentId) {
+                    setRegistrationStatus("verification_failed");
                     setError(
-                      "Registration finalized, but no agent is currently registered for this wallet. The transaction itself was not treated as a successful registration.",
+                      finalizedVerificationError(
+                        "Registration finalized, but no agent is currently registered for this wallet. The transaction result could not be reconciled with contract state.",
+                      ),
                     );
                     return;
                   }
                   if (returnedAgentId && returnedAgentId !== agentId) {
+                    setRegistrationStatus("verification_failed");
                     setError(
-                      "Registration finalized, but the receipt and wallet lookup returned different agent IDs.",
+                      finalizedVerificationError(
+                        "Registration finalized, but the receipt and wallet lookup returned different agent IDs.",
+                      ),
                     );
                     return;
                   }
                   const registeredAgent = await getAgent(agentId, client);
                   if (registeredAgent.id !== agentId) {
+                    setRegistrationStatus("verification_failed");
                     setError(
-                      "Registration finalized, but the returned agent ID could not be verified on-chain.",
+                      finalizedVerificationError(
+                        "Registration finalized, but the returned agent ID could not be verified on-chain.",
+                      ),
                     );
                     return;
                   }
@@ -664,8 +759,11 @@ export function RegisterAgentForm() {
                     !wallet.address ||
                     registeredAgent.owner.toLowerCase() !== wallet.address.toLowerCase()
                   ) {
+                    setRegistrationStatus("verification_failed");
                     setError(
-                      "Registration finalized, but the returned agent is not owned by the registering wallet.",
+                      finalizedVerificationError(
+                        "Registration finalized, but the returned agent is not owned by the registering wallet.",
+                      ),
                     );
                     return;
                   }
@@ -678,18 +776,32 @@ export function RegisterAgentForm() {
                     agent: registeredAgent,
                     source: "onchain" as const,
                   });
+                  setRegistrationStatus("finalized_success");
                   await navigate({ to: "/agent/$id", params: { id: agentId } });
                 } catch (reason) {
+                  setRegistrationStatus("verification_failed");
                   setError(
-                    "Registration finalized, but the on-chain agent record could not be verified. Refresh the wallet-agent lookup before trying again.",
+                    finalizedVerificationError(
+                      "Registration finalized, but the on-chain agent record could not be verified. The transaction was not reclassified as a contract revert.",
+                      reason,
+                    ),
                   );
                 }
               }}
               onError={(reason) => {
                 setError(reason);
+                setRegistrationStatus(registrationFailureStatus(reason));
                 setWrite(null);
               }}
-              onDismiss={() => setWrite(null)}
+              onFinalityError={(reason) => {
+                setError(reason);
+                setRegistrationStatus(registrationFailureStatus(reason));
+                setWrite(null);
+              }}
+              onDismiss={() => {
+                setWrite(null);
+                if (registrationStatus === "awaiting_approval") setRegistrationStatus("review");
+              }}
             />
           </section>
         )}
@@ -1485,7 +1597,7 @@ export function FundedProposalForm() {
     connectionState === "ready" &&
     wallet.status === "connected" &&
     Boolean(wallet.address && wallet.connectedClient);
-  const pendingTransactions = usePendingTransactions();
+  const pendingTransactions = usePendingTransactions(pendingScope(wallet.address, wallet.chainId));
   const campaignCreationPending = pendingTransactions.some(
     (record) => record.method === "create_campaign",
   );

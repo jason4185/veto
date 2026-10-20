@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { TrackedStatus } from "@genlayer/transaction-kit";
 import {
   transactionResultId,
+  transactionFailureDetail,
   verifySuccessfulDecision,
   verifySuccessfulTransaction,
 } from "./transaction";
@@ -20,6 +21,24 @@ function status(overrides: Partial<TrackedStatus>): TrackedStatus {
 }
 
 describe("finalized transaction verification", () => {
+  it("preserves an explicit protocol contract error for user-facing decoding", () => {
+    expect(
+      transactionFailureDetail({
+        consensus_data: {
+          leader_receipt: [
+            {
+              result: { status: "contract_error", payload: "[EXPECTED] operator already used" },
+            },
+          ],
+        },
+      }),
+    ).toBe("[EXPECTED] operator already used");
+    expect(transactionFailureDetail({ result: "[EXPECTED] owner already used" })).toBe(
+      "[EXPECTED] owner already used",
+    );
+    expect(transactionFailureDetail({ statusName: "FINALIZED" })).toBeUndefined();
+  });
+
   it("reads the returned contract ID from the GenLayer leader payload", () => {
     expect(
       transactionResultId({
@@ -73,6 +92,33 @@ describe("finalized transaction verification", () => {
         { getTransaction: vi.fn() } as never,
       ),
     ).rejects.toThrow("Transaction execution failed");
+  });
+
+  it("uses an explicit finalized receipt error when the status includes a transaction ID", async () => {
+    await expect(
+      verifySuccessfulDecision(
+        status({
+          phase: "decided",
+          statusName: "ACCEPTED",
+          executionResultName: "FINISHED_WITH_ERROR",
+          successful: false,
+        }),
+        {
+          getTransaction: vi.fn().mockResolvedValue({
+            consensus_data: {
+              leader_receipt: [
+                {
+                  result: {
+                    status: "contract_error",
+                    payload: "[EXPECTED] operator already used",
+                  },
+                },
+              ],
+            },
+          }),
+        } as never,
+      ),
+    ).rejects.toThrow("operator already used");
   });
 
   it("does not treat an accepted transaction as finalized", async () => {
