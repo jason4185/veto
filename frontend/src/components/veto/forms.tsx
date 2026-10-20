@@ -717,6 +717,7 @@ export function RegisterAgentForm() {
                   );
                   return;
                 }
+                let verifiedAgentId: string | undefined;
                 try {
                   const receipt = await getVetoTransaction(client, id);
                   const returnedAgentId = transactionResultId(receipt);
@@ -777,7 +778,7 @@ export function RegisterAgentForm() {
                     source: "onchain" as const,
                   });
                   setRegistrationStatus("finalized_success");
-                  await navigate({ to: "/agent/$id", params: { id: agentId } });
+                  verifiedAgentId = agentId;
                 } catch (reason) {
                   setRegistrationStatus("verification_failed");
                   setError(
@@ -787,6 +788,8 @@ export function RegisterAgentForm() {
                     ),
                   );
                 }
+                if (verifiedAgentId)
+                  await navigate({ to: "/agent/$id", params: { id: verifiedAgentId } });
               }}
               onError={(reason) => {
                 setError(reason);
