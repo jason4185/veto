@@ -2,7 +2,7 @@
 
 ## Scope and deployment safety
 
-This report covers the current local [`contracts/Veto.py`](../contracts/Veto.py). The deployed address `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4` and historical address `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` were not modified. The deployed address predates the local wallet-lookup revision; no deployment or GEN transaction was performed, and Vercel was not changed.
+This report covers the current local [`contracts/Veto.py`](../contracts/Veto.py). The current deployed address `0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd` and historical address `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` were not modified. The current address exposes the wallet-lookup method and was checked read-only; no new deployment or GEN transaction was performed, and Vercel was not changed.
 
 The remediation remains one VETO contract project. `docs/VETO_V2_ARCHITECTURE.md` is a retained design filename, not a second codebase.
 
@@ -11,7 +11,7 @@ The remediation remains one VETO contract project. `docs/VETO_V2_ARCHITECTURE.md
 | PAPITO concern | Local result | Proof boundary |
 | --- | --- | --- |
 | Fabricated evidence | **Partially remediated locally; not closed as independent proof** | Objective rules are deterministic; semantic rules require a one-time on-chain authority record. The authority is an explicit trust root, not a claim of decentralized real-world truth. |
-| Owner/operator bypass | **Fixed locally; live replacement verification required** | One shared identity reservation map covers registration, replacement, retired operators, active status, participation, and direct wallet lookup. Person-level Sybil across unrelated wallets remains impossible to prevent here. |
+| Owner/operator bypass | **Fixed locally; current interface read-verified** | One shared identity reservation map covers registration, replacement, retired operators, active status, participation, and direct wallet lookup. Person-level Sybil across unrelated wallets remains impossible to prevent here. |
 | GEN transfer safety | **Not closed** | All four paths emit external ghost messages. Synchronous exceptions occur before one-way accounting changes, but neither this contract nor the installed client exposes an authenticated external-delivery receipt or safe recovery path. Studio cannot model the live ghost layer. |
 
 ## 1. Evidence integrity
@@ -47,6 +47,14 @@ Covered by host emulation:
 - semantic valid record with authority attestation: `AUTHENTICATED`.
 
 These are mocked runtime tests. They prove the contract gate in the host model, not real-world source truth and not live validator/ghost behavior.
+
+## Registration incident and frontend remediation
+
+The only transaction found from the reported wallet (`0xC8Ba5DA455b011863F2ECa76a6fa21E62Cc91B87`) to the current deployment was `0x9896d1dfe7ae93dc30f1422e78dc8cef3edc97f3c43362b6030b7a7d9848954d`. It was `FINALIZED · ACCEPTED` with `FINISHED_WITH_RETURN`, but decoded calldata was `{}` and the leader return payload was `null`. It was therefore not a registration transaction and did not mutate agent state; `get_agent_by_wallet` returned `0` afterward.
+
+For comparison, the older deployment transaction `0x896849a7e6c273bff8626c2f9c7ba9a88dcd840e779b9b9f239e8cdd594423af` encoded `register_agent` with empty operator/payout arguments and finalized with `FINISHED_WITH_ERROR`. The frontend now supplies explicit owner addresses when those fields are blank, rejects malformed registration adapter arguments, parses returned IDs from the GenLayer leader payload, performs the authoritative wallet lookup after finality, and separates post-finality verification errors from contract execution errors. The frontend regression suite is 91 passed across 11 files. No new live registration was submitted.
+
+The production bundle inspected during this investigation embedded the current contract address and registration method. The chain does not retain the original UI state, so the exact client-side cause of the empty current call cannot be proven beyond the malformed calldata itself. The fix prevents the known blank-field path and makes future failures diagnosable without treating a successful no-op as registration success.
 
 ## 2. Identity security
 
@@ -91,16 +99,16 @@ Host tests reconcile these ledgers after normal settlement, invalid/inconclusive
 - `genvm-lint lint contracts/Veto.py --json`: passed, 3 AST checks.
 - The exact pinned runner is locally present in the official GenVM Manager `v0.6.0-rc6` universal bundle (`sha256:bd30580f911338d5533460eca8ed714dec371de5803c04e41dbb96430aea7b6e`; extracted runner ZIP `sha256:2cbcc8389744c4321852d2c0b4bfcef0729bfd22467e2aaf0d4d204cf6f015eb`). The official arm64 macOS execution bundle matches the release `SHA256SUMS` (`sha256:25995423dedb468d5d70673759e90dfaf33fe1b455982c343c2795952ae5e312`). The bundled executor and manager install checks passed. A prior exact-runner sequence completed **20 successful GenVM calls with 0 manager failures** for the unchanged lifecycle, typed-policy, attestation, identity, and external-message paths. This is exact local GenVM execution, not validator consensus or live ghost delivery, and it predates the new wallet-lookup method. Preliminary harness failures were corrected fee-schema/balance setup errors and were not counted as contract failures. Stock `genvm-lint check` remains blocked by its `E101` lookup for a `.tar` runner member even though the official current bundle contains the exact `.zip`; this is not full nondeterministic semantic/validator validation.
 - Direct/integration Studio harness: unavailable (`gltest` and `gltest.config.yaml` absent).
-- Existing-deployment read verification is historical evidence for the prior 29-method address. The local 30-method wallet-lookup revision has not been deployed. No deployment receipt hash, validator round, native GEN receipt, child transfer, or funded transaction was supplied or executed in this worktree.
+- Existing-deployment read verification for `0x1F7df5...` confirmed `get_config`, `get_campaign_count`, `get_global_accounting`, `get_agent_by_wallet`, and the 30-method reflected interface. No deployment receipt hash, validator round, native GEN receipt, child transfer, or funded transaction was supplied or executed in this worktree.
 - Pinned GenVM validation: AST lint passed; exact manager/executor execution passed for deterministic and emission cases listed above. The official bundle contains `runners/py-genlayer/5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng.zip`. Stock `genvm-lint validate`, `schema`, `setup`, and `check` cannot consume the current `.zip` layout (`E101`, missing `.tar` member), so nondeterministic semantic validation through the stock tool remains unproven. No other runner was substituted.
-- Frontend: TypeScript passed; Vitest **90 passed across 11 files**; ESLint passed with 0 errors and 15 existing warnings; Prettier and production build passed with advisory chunk/configuration warnings.
+- Frontend: TypeScript passed; Vitest **91 passed across 11 files**; ESLint passed with 0 errors and 15 existing warnings; Prettier and production build passed with advisory chunk/configuration warnings.
 
 ## Contract artifact
 
 - Final local size: **51,986 UTF-8 bytes**; 14 bytes below the 52,000-byte limit.
 - Final local SHA-256: **`6041e7b033e9ab619e784412fce3becc9ce1214e850d09375ee3aca784b3016d`**.
 - Old deployed address: `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` (unchanged).
-- Replacement address: `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4`; deployment transaction hash was not supplied.
+- Current deployed address: `0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd`; deployment transaction hash was not supplied.
 
 ## PAPITO response draft
 

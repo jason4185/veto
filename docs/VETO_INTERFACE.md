@@ -1,6 +1,6 @@
 # VETO contract interface and security boundary
 
-`contracts/Veto.py` is the authoritative local interface. The current deployment is `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4`, but it predates the local `get_agent_by_wallet` revision; the historical deployment `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` is unchanged and uses separate state.
+`contracts/Veto.py` is the authoritative local interface. The current deployment is `0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd` and exposes `get_agent_by_wallet`; the historical deployment `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` is unchanged and uses separate state.
 
 Local artifact: 51,986 UTF-8 bytes, SHA-256 `6041e7b033e9ab619e784412fce3becc9ce1214e850d09375ee3aca784b3016d`.
 
@@ -65,8 +65,8 @@ Frontend adapters must require these fields before treating a deployment as the 
 
 ## Migration
 
-Changing the local source does not change either deployed address. A future deployment of this 30-method interface has fresh storage. Existing campaigns, registered agents, claimable rewards, proposal escrows, and pending transactions remain associated with their original address and cannot be mixed with new-contract reads. A migration requires an explicit, separately audited mechanism and user approval.
+Changing the local source does not change either deployed address. The current 30-method deployment has fresh storage. Existing campaigns, registered agents, claimable rewards, proposal escrows, and pending transactions remain associated with their original address and cannot be mixed with new-contract reads. A migration requires an explicit, separately audited mechanism and user approval.
 
 ## Validation status
 
-Local host/static suite: **39 passed**. Python 3.12 compilation and GenVM AST lint pass. The exact v0.6.0-rc6 manager/executor bundle was hash-checked, its runners passed `genvm check` and manager `check-install`, and it executed the previously recorded deterministic cases locally. The contract now reflects 30 public methods (17 views and 13 writes) by AST; stock exact-runner schema/semantic validation remains blocked by `E101` because the installed linter expects an exact-runner `.tar` member while the official bundle provides `.zip`. No other runner was substituted and no full nondeterministic validator execution is claimed. The existing replacement address has not been redeployed or modified; no funded transaction or GEN transfer was performed in this work.
+Local host/static suite: **39 passed**. Python 3.12 compilation and GenVM AST lint pass. The exact v0.6.0-rc6 manager/executor bundle was hash-checked, its runners passed `genvm check` and manager `check-install`, and it executed the previously recorded deterministic cases locally. The contract reflects 30 public methods (17 views and 13 writes) by AST and the current deployment’s reflected schema. Stock exact-runner schema/semantic validation remains blocked by `E101` because the installed linter expects an exact-runner `.tar` member while the official bundle provides `.zip`. No other runner was substituted and no full nondeterministic validator execution is claimed. No funded transaction or GEN transfer was performed in this work.

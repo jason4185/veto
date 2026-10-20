@@ -63,14 +63,47 @@ export async function verifySuccessfulDecision(status: TrackedStatus, client: Ge
   return status.genlayerTxId;
 }
 
-/** Read the contract method's returned ID from a finalized transaction receipt. */
+function positiveContractId(value: unknown): string | undefined {
+  if (typeof value === "bigint" && value > 0n) return value.toString();
+  if (typeof value === "number" && Number.isSafeInteger(value) && value > 0) return String(value);
+  return isContractId(value) ? value : undefined;
+}
+
+function returnedId(value: unknown): string | undefined {
+  const direct = positiveContractId(value);
+  if (direct) return direct;
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  if (!text) return undefined;
+  const parsed = (() => {
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return undefined;
+    }
+  })();
+  if (parsed !== undefined) return returnedId(parsed);
+  return isContractId(text) ? text : undefined;
+}
+
+/** Read the contract method's return value, not GenLayer's execution status code. */
 export function transactionResultId(value: unknown): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
-  const result = (value as { result?: unknown }).result;
-  if (typeof result === "bigint" && result > 0n) return result.toString();
-  if (typeof result === "number" && Number.isSafeInteger(result) && result > 0)
-    return String(result);
-  return isContractId(result) ? result : undefined;
+  const receipt = value as {
+    consensus_data?: { leader_receipt?: Array<{ result?: unknown }> };
+  };
+  const leaderResult = receipt.consensus_data?.leader_receipt?.[0]?.result;
+  if (!leaderResult || typeof leaderResult !== "object" || Array.isArray(leaderResult))
+    return undefined;
+  const returned = leaderResult as { status?: unknown; payload?: unknown };
+  if (returned.status !== "return") return undefined;
+  const payload = returned.payload;
+  if (payload && typeof payload === "object" && !Array.isArray(payload)) {
+    const readable = (payload as { readable?: unknown }).readable;
+    const named = (payload as { ""?: unknown })[""];
+    return returnedId(readable ?? named ?? payload);
+  }
+  return returnedId(payload);
 }
 
 function leaderRounds(distribution: PolicyQuote["distribution"]) {

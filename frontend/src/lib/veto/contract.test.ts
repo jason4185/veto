@@ -15,11 +15,36 @@ import {
   submitChallengeWrite,
   discoverWalletAgent,
   publishAttestationWrite,
+  registerAgentWrite,
 } from "./contract";
 import { VetoReadError } from "./errors";
 import { vetoContractAddress } from "./network";
 
 describe("VETO contract write adapter", () => {
+  it("always encodes explicit operator and payout addresses", () => {
+    expect(
+      registerAgentWrite(
+        "Audit agent",
+        "Checks proposals.",
+        "0x1111111111111111111111111111111111111111",
+        "0x2222222222222222222222222222222222222222",
+      ),
+    ).toEqual({
+      kind: "write",
+      address: vetoContractAddress,
+      method: "register_agent",
+      args: [
+        "Audit agent",
+        "Checks proposals.",
+        "0x1111111111111111111111111111111111111111",
+        "0x2222222222222222222222222222222222222222",
+      ],
+    });
+    expect(() => registerAgentWrite("Audit agent", "Checks proposals.", "", "")).toThrow(
+      "Operator must be a valid 0x address",
+    );
+  });
+
   it("uses the fixed-budget create_campaign signature and exact payable value", () => {
     const write = createCampaignWrite({
       name: "Treasury review",

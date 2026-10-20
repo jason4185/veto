@@ -214,13 +214,13 @@ The current deployment target is GenLayer Studio Next, not GenLayer mainnet.
 | Network                 | GenLayer Studio Next                                                                                                                        |
 | Chain ID                | `61997`                                                                                                                                     |
 | RPC                     | `https://studio-next.genlayer.com/api`                                                                                                      |
-| Current deployed contract | [`0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4`](https://explorer-studio-dev.genlayer.com/address/0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4) |
+| Current deployed contract | [`0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd`](https://explorer-studio-dev.genlayer.com/address/0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd) |
 | Historical contract     | [`0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8`](https://explorer-studio-dev.genlayer.com/address/0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8) |
 | Explorer                | [GenLayer Studio Explorer](https://explorer-studio-dev.genlayer.com/)                                                                       |
 | Local source size             | 51,986 UTF-8 bytes                                                                                                                       |
 | Local source SHA-256          | `6041e7b033e9ab619e784412fce3becc9ce1214e850d09375ee3aca784b3016d`                                                                     |
 
-The local source is a prepared, not-yet-deployed revision. The current deployed address predates `get_agent_by_wallet` and must be replaced manually before cross-device on-chain wallet recognition is available; the frontend remains compatible with it through a bounded, live-verified remembered-ID fallback. The historical address was not modified and has separate state. No campaign funding or GEN transfer was performed during this verification.
+The current deployed address exposes the 30-method interface, including `get_agent_by_wallet`, and was verified read-only against Studio Next. The historical address was not modified and has separate state. No campaign funding or GEN transfer was performed during this verification.
 
 ## Running Locally
 
@@ -238,7 +238,7 @@ The development server normally starts at `http://localhost:5173/`. The frontend
 ```dotenv
 VITE_GENLAYER_RPC_URL=https://studio-next.genlayer.com/api
 VITE_GENLAYER_CHAIN_ID=61997
-VITE_VETO_CONTRACT_ADDRESS=0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4
+VITE_VETO_CONTRACT_ADDRESS=0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd
 ```
 
 Do not place private keys, seed phrases, wallet exports, or secret API credentials in `.env.local`. The repository ignores local environment files while preserving `frontend/.env.example`.
@@ -273,7 +273,7 @@ The Lovable-designed frontend is a TanStack file-based application. Its current 
 
 The normal agent path is `Agents → verified agent → Explore campaigns → campaign proposal → Challenge proposal`. The creator path is `Dashboard → campaign → funded proposal → challenges → ordered resolution → execution/refund/closure`. Public reads remain available when the wallet is disconnected; transaction controls require a connected, correctly configured wallet and contract.
 
-The frontend first calls `get_agent_by_wallet` for the connected wallet and then verifies the returned record with `get_agent`. A remembered wallet-scoped ID is retained only as a compatibility fallback while the currently deployed older contract does not expose the new view; it is never treated as proof and is revalidated against the live owner/operator fields. No transaction-history or sequential-ID scan is used. The contract remains the authority for identity, participation, eligibility, rewards, and settlement.
+The frontend first calls `get_agent_by_wallet` for the connected wallet and then verifies the returned record with `get_agent`. A remembered wallet-scoped ID is retained only as a compatibility fallback for older deployments that do not expose the new view; it is never treated as proof and is revalidated against the live owner/operator fields. No transaction-history or sequential-ID scan is used. The contract remains the authority for identity, participation, eligibility, rewards, and settlement.
 
 ## Testing and Verification
 
@@ -286,14 +286,22 @@ The repository was checked locally before publication:
 | GenVM AST lint                            | Passed.                                                                                                                                                                       |
 | GenVM validation                         | Exact v0.6.0-rc6 manager/executor ran initialization, typed objective evaluations, invalid constraints, authority/context gates, cross-role identity rejection, and external-message emission. Stock `genvm-lint check` remains blocked by `E101` because it expects a `.tar` runner member while the official bundle supplies the exact runner as `.zip`; nondeterministic validator execution is not claimed. |
 | Frontend TypeScript                       | Passed with `bunx tsc --noEmit`.                                                                                                                                              |
-| Frontend Vitest                           | **90 tests passed** across 11 files; local configuration retains the current deployment until a manual replacement is supplied.                                               |
+| Frontend Vitest                           | **91 tests passed** across 11 files, including malformed-registration, finalized-return, and wallet-agent verification regressions.                                             |
 | Frontend ESLint                           | Passed with 0 errors and 15 existing Fast Refresh warnings.                                                                                                                   |
 | Frontend Prettier                         | Passed with `bunx prettier --check .`.                                                                                                                                        |
 | Frontend production build                 | Passed with `bun run build`; Vite/Nitro emitted advisory chunk-size and configuration warnings only.                                                                          |
 
 The contract tests cover fixed funding, campaign and proposal lifecycle rules, ordered challenge resolution, evidence validation, authorization, pagination, claims, refunds, and accounting reconciliation. Frontend tests cover adapter parsing, sender-scoped reads, wallet-associated agent metadata, route/ID handling, forms, and transaction refresh behavior.
 
-These results are not a claim that the complete reward and settlement lifecycle has been executed on Studio Next. The new wallet view is validated locally but has not been deployed. No campaign funding or GEN transfer was performed. Live multi-validator finality, native transfer receipts, and production evidence provenance require separate Studio Next verification.
+These results are not a claim that the complete reward and settlement lifecycle has been executed on Studio Next. The current deployment’s wallet view was read-verified, while the local source and frontend fixes still require the normal production build rollout. No campaign funding or GEN transfer was performed. Live multi-validator finality, native transfer receipts, and production evidence provenance require separate Studio Next verification.
+
+### Registration incident trace
+
+The only transaction found from the reported wallet (`0xC8Ba5DA455b011863F2ECa76a6fa21E62Cc91B87`) to the current deployment was `0x9896d1dfe7ae93dc30f1422e78dc8cef3edc97f3c43362b6030b7a7d9848954d`. It finalized with `FINISHED_WITH_RETURN`, but decoded calldata was `{}` and the leader return payload was `null`; it was not a `register_agent` call. Read-only state confirmed `get_agent_by_wallet(wallet) == 0`, `get_campaign_count() == 0`, and zero global accounting, so no agent was registered.
+
+An older deployment transaction, `0x896849a7e6c273bff8626c2f9c7ba9a88dcd840e779b9b9f239e8cdd594423af`, did encode `register_agent` but supplied empty operator and payout strings and finalized with `FINISHED_WITH_ERROR`. These are distinct outcomes: the current candidate was a successful empty/no-op call; the older call was a genuine contract execution failure. The production bundle inspected during this investigation embedded the current address and `register_agent` method, but Studio does not expose the user’s UI intent, so the available evidence cannot prove why the empty call was created.
+
+The frontend fix makes blank operator and payout fields explicit owner addresses, rejects malformed registration write arguments, reads returned IDs from GenLayer’s leader return payload rather than the top-level execution status code, and verifies the finalized wallet-to-agent mapping before navigation. Post-finality lookup failures are reported separately from transaction execution failure. No retry or live registration was performed.
 
 ## Security and Limitations
 

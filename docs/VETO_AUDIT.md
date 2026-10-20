@@ -5,7 +5,7 @@
 - Authoritative source: `contracts/Veto.py`.
 - Runner pin: `py-genlayer:5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng`.
 - Network target: GenLayer Studio Next, chain `61997`.
-- Current deployed address: `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4`; it predates the local wallet-lookup revision and was not modified.
+- Current deployed address: `0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd`; its 30-method interface and fresh zero state were verified read-only on Studio Next.
 - Historical deployment: `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8`; it was not modified.
 - Local source artifact: **51,986 UTF-8 bytes**, SHA-256 **`6041e7b033e9ab619e784412fce3becc9ce1214e850d09375ee3aca784b3016d`**; 14 bytes below the 52,000-byte limit.
 - This is a single-contract remediation. The retained `VETO_V2_ARCHITECTURE.md` filename describes the versioned security boundary, not a separate project.
@@ -62,10 +62,18 @@ Current compact-source function references:
 
 Python 3.12 compilation and GenVM AST lint (3 checks) pass. The exact pinned runner is available in the official GenVM Manager `v0.6.0-rc6` bundle, but stock `genvm-lint check`, `validate`, and `schema` remain blocked with `E101`: the linter looks for `runners/py-genlayer/...<hash>.tar`, while the official bundle provides the exact runner as `.zip`. No replacement runner was used; full nondeterministic semantic/validator execution and live Studio Next ghost delivery remain unproven.
 
-Frontend adapter/tests/build after the remediation pass: TypeScript passed, Vitest passed 90 tests across 11 files, ESLint passed with 0 errors and 15 existing warnings, Prettier passed, and the production build passed with advisory chunk-size/configuration warnings. The adapter supports the new lookup and a bounded fallback for the historical deployment; no funded transaction was performed.
+Frontend adapter/tests/build after the remediation pass: TypeScript passed, Vitest passed 91 tests across 11 files, ESLint passed with 0 errors and 15 existing warnings, Prettier passed, and the production build passed with advisory chunk-size/configuration warnings. The adapter supports the deployed lookup and a bounded fallback for the historical deployment; no funded transaction was performed.
 
-The frontend adapter references the corrected 30-method interface, including `get_agent_by_wallet(wallet_address)`, and does not invent `get_agent_count()`. Until a deployment exposing that view is configured, an unsupported-method response from the current deployed address falls back only to a previously verified local association and then rechecks `get_agent`; it never scans transaction history or sequential IDs.
+The frontend adapter references the corrected 30-method interface, including `get_agent_by_wallet(wallet_address)`, and does not invent `get_agent_count()`. An unsupported-method response from an older deployment falls back only to a previously verified local association and then rechecks `get_agent`; it never scans transaction history or sequential IDs.
 
 ## Deployment and migration
 
-Both deployed addresses retain their own state/code. The local 30-method wallet-lookup revision has not been deployed; a future deployment starts with fresh campaigns, agents, rewards, escrows, and pending claims because storage does not migrate automatically. Live validator rounds, semantic validation through the stock tool, and real chain-level external-delivery tests remain unverified. Any frontend rollout must explicitly switch to the new address and must not mix contract scopes.
+Both deployed addresses retain their own state/code. The current 30-method deployment starts with fresh campaigns, agents, rewards, escrows, and pending claims; storage does not migrate automatically from either historical address. Live validator rounds, semantic validation through the stock tool, and real chain-level external-delivery tests remain unverified. Any frontend rollout must keep contract scopes isolated.
+
+## Registration incident trace
+
+The only transaction found from the reported wallet (`0xC8Ba5DA455b011863F2ECa76a6fa21E62Cc91B87`) to the current deployment was `0x9896d1dfe7ae93dc30f1422e78dc8cef3edc97f3c43362b6030b7a7d9848954d`. It finalized with `FINISHED_WITH_RETURN`, but decoded calldata was `{}` and the leader return payload was `null`; it was not a `register_agent` call. Read-only state confirmed `get_agent_by_wallet(wallet) == 0`, `get_campaign_count() == 0`, and zero global accounting, so no agent was registered.
+
+An older deployment transaction, `0x896849a7e6c273bff8626c2f9c7ba9a88dcd840e779b9b9f239e8cdd594423af`, did encode `register_agent` but supplied empty operator and payout strings and finalized with `FINISHED_WITH_ERROR`. These are distinct outcomes: the current candidate was a successful empty/no-op call; the older call was a genuine contract execution failure. The production bundle inspected during this investigation embedded the current address and `register_agent` method, but Studio does not expose the user’s UI intent, so the available evidence cannot prove why the empty call was created.
+
+The frontend fix makes blank operator and payout fields explicit owner addresses, rejects malformed registration write arguments, reads returned IDs from GenLayer’s leader return payload rather than the top-level execution status code, and verifies the finalized wallet-to-agent mapping before navigation. Post-finality lookup failures are reported separately from transaction execution failure. No retry or live registration was performed.

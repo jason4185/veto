@@ -27,6 +27,7 @@ import {
   createCampaignWrite,
   getCampaign,
   getAgent,
+  getAgentByWallet,
   getAgentCampaignParticipation,
   getProposal,
   registerAgentWrite,
@@ -492,6 +493,11 @@ export function RegisterAgentForm() {
   const [confirmed, setConfirmed] = useState(false);
   const [write, setWrite] = useState<ContractWrite | null>(null);
   const [txId, setTxId] = useState("");
+  useEffect(() => {
+    setReview(undefined);
+    setConfirmed(false);
+    setWrite(null);
+  }, [wallet.address]);
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setError("");
@@ -508,7 +514,12 @@ export function RegisterAgentForm() {
       return setError("Agent description is too long for the contract.");
     if (operator && !isAddress(operator)) return setError("Operator must be a valid 0x address.");
     if (payout && !isAddress(payout)) return setError("Payout must be a valid 0x address.");
-    setReview({ name, description, operator, payout });
+    setReview({
+      name,
+      description,
+      operator: operator || wallet.address,
+      payout: payout || wallet.address,
+    });
     setConfirmed(false);
   };
   return (
@@ -617,12 +628,31 @@ export function RegisterAgentForm() {
                   );
                   return;
                 }
+                if (!wallet.address) {
+                  setError(
+                    "Registration finalized, but the owner wallet disconnected before the new agent could be verified.",
+                  );
+                  return;
+                }
                 try {
                   const receipt = await getVetoTransaction(client, id);
-                  const agentId = transactionResultId(receipt);
+                  const returnedAgentId = transactionResultId(receipt);
+                  let agentId: string | undefined;
+                  try {
+                    agentId = await getAgentByWallet(wallet.address, client);
+                  } catch (reason) {
+                    if (!returnedAgentId) throw reason;
+                    agentId = returnedAgentId;
+                  }
                   if (!agentId) {
                     setError(
-                      "Registration finalized, but Studio Next did not return a verifiable agent ID.",
+                      "Registration finalized, but no agent is currently registered for this wallet. The transaction itself was not treated as a successful registration.",
+                    );
+                    return;
+                  }
+                  if (returnedAgentId && returnedAgentId !== agentId) {
+                    setError(
+                      "Registration finalized, but the receipt and wallet lookup returned different agent IDs.",
                     );
                     return;
                   }
@@ -653,7 +683,9 @@ export function RegisterAgentForm() {
                   );
                   await navigate({ to: "/agent/$id", params: { id: agentId } });
                 } catch (reason) {
-                  setError(reason);
+                  setError(
+                    "Registration finalized, but the on-chain agent record could not be verified. Refresh the wallet-agent lookup before trying again.",
+                  );
                 }
               }}
               onError={(reason) => {

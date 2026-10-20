@@ -1,4 +1,5 @@
 import type { Address } from "viem";
+import { isAddress } from "viem";
 import { getReadClient, type GenLayerClient } from "./client";
 import { vetoContractAddress } from "./network";
 import {
@@ -703,6 +704,8 @@ export function registerAgentWrite(
   operator: string,
   payout: string,
 ): ContractWrite {
+  if (!isAddress(operator)) throw new Error("Operator must be a valid 0x address.");
+  if (!isAddress(payout)) throw new Error("Payout must be a valid 0x address.");
   return {
     kind: "write",
     address: vetoContractAddress,

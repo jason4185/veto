@@ -20,11 +20,24 @@ function status(overrides: Partial<TrackedStatus>): TrackedStatus {
 }
 
 describe("finalized transaction verification", () => {
-  it("accepts only a positive returned contract ID", () => {
-    expect(transactionResultId({ result: 1 })).toBe("1");
-    expect(transactionResultId({ result: "2" })).toBe("2");
-    expect(transactionResultId({ result: 0 })).toBeUndefined();
-    expect(transactionResultId({ result: "not-an-id" })).toBeUndefined();
+  it("reads the returned contract ID from the GenLayer leader payload", () => {
+    expect(
+      transactionResultId({
+        result: 1,
+        consensus_data: {
+          leader_receipt: [{ result: { status: "return", payload: { readable: "2" } } }],
+        },
+      }),
+    ).toBe("2");
+    expect(transactionResultId({ result: 1 })).toBeUndefined();
+    expect(
+      transactionResultId({
+        result: 1,
+        consensus_data: {
+          leader_receipt: [{ result: { status: "contract_error", payload: "unknown agent" } }],
+        },
+      }),
+    ).toBeUndefined();
     expect(transactionResultId({})).toBeUndefined();
   });
 

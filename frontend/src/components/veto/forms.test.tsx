@@ -27,7 +27,9 @@ const mocks = vi.hoisted(() => ({
   },
   navigate: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   getAgent: vi.fn(),
+  getAgentByWallet: vi.fn(),
   getAgentCampaignParticipation: vi.fn(),
+  lastWrite: undefined as ContractWrite | undefined,
   invalidateVetoQueries: vi.fn<() => Promise<void>>().mockResolvedValue(undefined),
   proposal: undefined as unknown,
   campaign: undefined as unknown,
@@ -39,6 +41,7 @@ vi.mock("@/lib/veto/contract", async (importOriginal) => {
   return {
     ...actual,
     getAgent: mocks.getAgent,
+    getAgentByWallet: mocks.getAgentByWallet,
     getAgentCampaignParticipation: mocks.getAgentCampaignParticipation,
   };
 });
@@ -143,16 +146,19 @@ vi.mock("@/lib/veto/transaction", () => ({
   }: {
     write: ContractWrite;
     onSuccess?: (txId: string) => void | Promise<void>;
-  }) => (
-    <div role="dialog" aria-label="VETO transaction">
-      Transaction Kit review · {write.method} · {String(write.value)} wei
-      {onSuccess && (
-        <button type="button" onClick={() => void onSuccess("0xregistration")}>
-          Finalize transaction
-        </button>
-      )}
-    </div>
-  ),
+  }) => {
+    mocks.lastWrite = write;
+    return (
+      <div role="dialog" aria-label="VETO transaction">
+        Transaction Kit review · {write.method} · {String(write.value)} wei
+        {onSuccess && (
+          <button type="button" onClick={() => void onSuccess("0xregistration")}>
+            Finalize transaction
+          </button>
+        )}
+      </div>
+    );
+  },
 }));
 
 function renderCreator() {
@@ -203,7 +209,9 @@ afterEach(() => {
   mocks.navigate.mockReset();
   mocks.navigate.mockResolvedValue(undefined);
   mocks.getAgent.mockReset();
+  mocks.getAgentByWallet.mockReset();
   mocks.getAgentCampaignParticipation.mockReset();
+  mocks.lastWrite = undefined;
   mocks.invalidateVetoQueries.mockReset();
   mocks.invalidateVetoQueries.mockResolvedValue(undefined);
   mocks.proposal = undefined;
@@ -392,6 +400,7 @@ describe("RegisterAgentForm finalized navigation", () => {
       getTransaction: vi.fn().mockResolvedValue({ result: 1 }),
     };
     mocks.wallet.connectedClient = connectedClient;
+    mocks.getAgentByWallet.mockResolvedValue("1");
     mocks.getAgent.mockResolvedValue({
       id: "1",
       name: "Verified agent",
@@ -433,6 +442,16 @@ describe("RegisterAgentForm finalized navigation", () => {
       }),
     );
     expect(connectedClient.getTransaction).toHaveBeenCalledWith({ hash: "0xregistration" });
+    expect(mocks.lastWrite).toMatchObject({
+      method: "register_agent",
+      args: [
+        "Verified agent",
+        "Verified on-chain.",
+        "0x2222222222222222222222222222222222222222",
+        mocks.wallet.address,
+      ],
+    });
+    expect(mocks.getAgentByWallet).toHaveBeenCalledWith(mocks.wallet.address, connectedClient);
     expect(mocks.getAgent).toHaveBeenCalledWith("1", connectedClient);
     expect(readKnownAgentId(mocks.wallet.address)).toBe("1");
     expect(readKnownAgentId("0x2222222222222222222222222222222222222222")).toBe("1");
