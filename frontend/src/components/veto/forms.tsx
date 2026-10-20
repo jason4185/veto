@@ -449,7 +449,10 @@ export function CreatorForm() {
                   }
                   await invalidateVetoQueries(
                     queryClient,
-                    invalidationKeysForWrite(write, queryClient),
+                    invalidationKeysForWrite(write, queryClient, {
+                      address: wallet.address,
+                      chainId: wallet.chainId,
+                    }),
                   );
                   await navigate({ to: "/campaign/$id", params: { id: campaignId } });
                 } catch (reason) {
@@ -948,7 +951,10 @@ export function UpdateAgentForm({
               }
               await invalidateVetoQueries(
                 queryClient,
-                invalidationKeysForWrite(write, queryClient),
+                invalidationKeysForWrite(write, queryClient, {
+                  address: wallet.address,
+                  chainId: wallet.chainId,
+                }),
               );
             } catch (reason) {
               setError(reason);
@@ -1541,7 +1547,10 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
                     if (recordedId) {
                       await invalidateVetoQueries(
                         queryClient,
-                        invalidationKeysForWrite(write, queryClient),
+                        invalidationKeysForWrite(write, queryClient, {
+                          address: wallet.address,
+                          chainId: wallet.chainId,
+                        }),
                       );
                       await navigate({ to: "/finding/$id", params: { id: recordedId } });
                       return;
@@ -1555,7 +1564,10 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
                 }
                 void invalidateVetoQueries(
                   queryClient,
-                  invalidationKeysForWrite(write, queryClient),
+                  invalidationKeysForWrite(write, queryClient, {
+                    address: wallet.address,
+                    chainId: wallet.chainId,
+                  }),
                 );
               }}
               onError={(reason) => {
@@ -1605,7 +1617,8 @@ export function FundedProposalForm() {
     (record) => record.method === "create_campaign",
   );
   const [campaignId, setCampaignId] = useState("");
-  const campaign = campaigns.find((item) => item.id === campaignId);
+  const selectedCampaignQuery = useCampaign(campaignId);
+  const campaign = selectedCampaignQuery.data ?? campaigns.find((item) => item.id === campaignId);
   const [error, setError] = useState<unknown>();
   const [review, setReview] = useState<{
     title: string;
@@ -1715,6 +1728,16 @@ export function FundedProposalForm() {
             description="The read completed successfully, but the connected wallet is not the creator of any returned campaign."
           />
         )}
+      {campaignId && selectedCampaignQuery.isPending && (
+        <ReadLoading message="Loading the selected campaign policy…" />
+      )}
+      {campaignId && selectedCampaignQuery.isError && (
+        <ReadFailure
+          title="The selected campaign policy could not be read."
+          error={selectedCampaignQuery.error}
+          onRetry={() => void selectedCampaignQuery.refetch()}
+        />
+      )}
       <PageControls
         page={campaignPage}
         total={campaignsQuery.data?.total ?? 0}
@@ -1857,7 +1880,10 @@ export function FundedProposalForm() {
                 }
                 await invalidateVetoQueries(
                   queryClient,
-                  invalidationKeysForWrite(write, queryClient),
+                  invalidationKeysForWrite(write, queryClient, {
+                    address: wallet.address,
+                    chainId: wallet.chainId,
+                  }),
                 );
                 await navigate({ to: "/proposal/$id", params: { id: proposalId } });
               } catch (reason) {

@@ -190,32 +190,35 @@ describe("VETO creator campaign reads", () => {
     );
   });
 
-  it("falls back to public campaign reads when sender-scoped discovery is empty", async () => {
+  it("keeps creator summary reads to one sender-scoped request", async () => {
     const readContract = vi.fn(async ({ functionName }: { functionName: string }) => {
-      if (functionName === "get_my_campaigns") {
-        return { has_more: false, items: [], limit: 50, offset: 0, total: 0 };
-      }
-      if (functionName === "get_campaign_count") return 1;
-      if (functionName === "get_campaign") {
-        return campaign;
-      }
-      if (functionName === "get_campaign_policies") return policyPage;
+      if (functionName === "get_my_campaigns")
+        return { has_more: false, items: [campaign], limit: 50, offset: 0, total: 1 };
       throw new Error(`Unexpected method ${functionName}`);
     });
 
     const result = await getCreatorCampaigns(creator, 0, 50, { readContract } as never);
 
-    expect(result.total).toBe(1);
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0]?.id).toBe("1");
-    expect(result.items[0]?.creator).toBe(creator);
-    expect(result.items[0]?.policies).toEqual(["Payments require review."]);
+    expect(result.items[0]?.policies).toEqual([]);
+    expect(readContract).toHaveBeenCalledTimes(1);
+  });
+
+  it("trusts a successful empty sender-scoped result without scanning public campaigns", async () => {
+    const readContract = vi.fn(async ({ functionName }: { functionName: string }) => {
+      if (functionName === "get_my_campaigns") {
+        return { has_more: false, items: [], limit: 50, offset: 0, total: 0 };
+      }
+      throw new Error(`Unexpected method ${functionName}`);
+    });
+
+    const result = await getCreatorCampaigns(creator, 0, 50, { readContract } as never);
+
+    expect(result.total).toBe(0);
+    expect(result.items).toHaveLength(0);
     expect(readContract).toHaveBeenCalledWith(
       expect.objectContaining({ functionName: "get_my_campaigns" }),
     );
-    expect(readContract).toHaveBeenCalledWith(
-      expect.objectContaining({ functionName: "get_campaign" }),
-    );
+    expect(readContract).toHaveBeenCalledTimes(1);
   });
 
   it("does not turn a failed sender read into an empty result", async () => {
@@ -223,13 +226,20 @@ describe("VETO creator campaign reads", () => {
     await expect(
       getCreatorCampaigns(creator, 0, 50, { readContract } as never),
     ).rejects.toBeInstanceOf(VetoReadError);
+    expect(readContract).toHaveBeenCalledTimes(1);
   });
 
   it("filters public fallback results by the contract creator address", async () => {
     const otherCreator = "0x1111111111111111111111111111111111111111";
     const readContract = vi.fn(async ({ functionName }: { functionName: string }) => {
       if (functionName === "get_my_campaigns")
-        return { has_more: false, items: [], limit: 50, offset: 0, total: 0 };
+        return {
+          has_more: false,
+          items: [{ ...campaign, creator: otherCreator }],
+          limit: 50,
+          offset: 0,
+          total: 1,
+        };
       if (functionName === "get_campaign_count") return 2;
       if (functionName === "get_campaign")
         return { ...campaign, creator: otherCreator, campaign_id: 1 };
@@ -241,6 +251,9 @@ describe("VETO creator campaign reads", () => {
 
     expect(result.items).toEqual([]);
     expect(result.total).toBe(0);
+    expect(readContract).toHaveBeenCalledWith(
+      expect.objectContaining({ functionName: "get_campaign_count" }),
+    );
   });
 });
 

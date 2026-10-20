@@ -50,7 +50,13 @@ export function ContractAction({
           onSuccess={(id) => {
             setTxId(id);
             setOpen(false);
-            void invalidateVetoQueries(queryClient, invalidationKeysForWrite(write, queryClient));
+            void invalidateVetoQueries(
+              queryClient,
+              invalidationKeysForWrite(write, queryClient, {
+                address: wallet.address,
+                chainId: wallet.chainId,
+              }),
+            );
           }}
           onError={(reason) => {
             setError(reason);

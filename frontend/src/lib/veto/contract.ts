@@ -112,6 +112,12 @@ async function read(client: GenLayerClient, method: string, args: unknown[] = []
     const result = await runRpcRequest({
       key,
       method,
+      context: {
+        source: "contract.read",
+        queryKey: method,
+        trigger: "query",
+        necessary: true,
+      },
       request: async () => {
         const request = client.readContract({
           address: vetoContractAddress,
@@ -362,10 +368,23 @@ async function getAllCampaigns(client: GenLayerClient): Promise<Campaign[]> {
   return campaigns;
 }
 
+function creatorLookupUnsupported(reason: unknown) {
+  const text =
+    reason instanceof VetoReadError
+      ? reason.causeText
+      : reason instanceof Error
+        ? reason.message
+        : String(reason);
+  return /method not found|unknown method|function not found|no such method|unsupported method|not implemented|does not exist/i.test(
+    text,
+  );
+}
+
 export async function getMyCampaigns(
   offset = 0,
   limit = 50,
   client = getReadClient(),
+  includePolicies = true,
 ): Promise<Page<Campaign>> {
   const result = page(
     await read(client, "get_my_campaigns", [
@@ -375,18 +394,19 @@ export async function getMyCampaigns(
     "campaign",
     mapCampaign,
   );
-  await Promise.all(
-    result.items.map(async (campaign) => {
-      campaign.policies = (
-        await getCampaignPolicies(
-          campaign.id,
-          0,
-          Math.min(Math.max(campaign.policyCount, 1), 50),
-          client,
-        )
-      ).items.map((item) => item.text);
-    }),
-  );
+  if (includePolicies)
+    await Promise.all(
+      result.items.map(async (campaign) => {
+        campaign.policies = (
+          await getCampaignPolicies(
+            campaign.id,
+            0,
+            Math.min(Math.max(campaign.policyCount, 1), 50),
+            client,
+          )
+        ).items.map((item) => item.text);
+      }),
+    );
   return result;
 }
 
@@ -394,31 +414,29 @@ export async function getMyCampaigns(
  * Returns campaigns owned by an explicit wallet address.
  *
  * get_my_campaigns() is sender-scoped in Veto.py. The direct call is useful
- * when the GenLayer client carries the connected account, but the contract
- * also exposes enough public campaign data to recover safely when a read
- * client sends the zero address (or the node returns an empty owner page).
- * The fallback never invents a campaign: it enumerates get_campaign_count /
- * get_campaign and filters the returned on-chain creator field.
+ * when the GenLayer client carries the connected account. A successful empty
+ * page is authoritative and is not expanded into a public scan. The bounded
+ * public fallback is reserved for older deployments that explicitly lack the
+ * sender-scoped method, and it filters every returned creator field on-chain.
  */
 export async function getCreatorCampaigns(
   creator: string,
   offset = 0,
   limit = 50,
   client = getReadClient(),
+  includePolicies = false,
 ): Promise<Page<Campaign>> {
   let direct: Page<Campaign> | undefined;
   try {
-    direct = await getMyCampaigns(offset, limit, client);
-  } catch {
-    // Fall through to public enumeration. If that also fails, surface its
-    // actual RPC/contract error to the UI instead of showing an empty state.
+    direct = await getMyCampaigns(offset, limit, client, includePolicies);
+  } catch (reason) {
+    // A transient or rate-limited sender read must not trigger an unrelated
+    // scan of every campaign. Public enumeration is only a compatibility
+    // fallback for deployments that explicitly lack get_my_campaigns.
+    if (!creatorLookupUnsupported(reason)) throw reason;
   }
 
-  if (
-    direct &&
-    direct.items.length > 0 &&
-    direct.items.every((item) => sameAddress(item.creator, creator))
-  ) {
+  if (direct && direct.items.every((item) => sameAddress(item.creator, creator))) {
     return direct;
   }
 
@@ -428,18 +446,19 @@ export async function getCreatorCampaigns(
   const safeOffset = Math.min(Number(pageNumber(offset, "campaign offset")), owned.length);
   const safeLimit = pageLimit(limit, "campaign limit");
   const items = owned.slice(safeOffset, safeOffset + safeLimit);
-  await Promise.all(
-    items.map(async (campaign) => {
-      campaign.policies = (
-        await getCampaignPolicies(
-          campaign.id,
-          0,
-          Math.min(Math.max(campaign.policyCount, 1), 50),
-          client,
-        )
-      ).items.map((item) => item.text);
-    }),
-  );
+  if (includePolicies)
+    await Promise.all(
+      items.map(async (campaign) => {
+        campaign.policies = (
+          await getCampaignPolicies(
+            campaign.id,
+            0,
+            Math.min(Math.max(campaign.policyCount, 1), 50),
+            client,
+          )
+        ).items.map((item) => item.text);
+      }),
+    );
   return {
     items,
     total: owned.length,

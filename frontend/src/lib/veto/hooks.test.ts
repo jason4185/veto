@@ -82,4 +82,25 @@ describe("VETO query identity and retry policy", () => {
     expect(challengeKeys).toContainEqual(vetoQueryKey("proposal-challenges", "1"));
     expect(challengeKeys).toContainEqual(vetoQueryKey("agent", "1"));
   });
+
+  it("scopes identity invalidation to the wallet that submitted the write", () => {
+    const wallet = "0x1111111111111111111111111111111111111111";
+    const otherWallet = "0x2222222222222222222222222222222222222222";
+    const keys = invalidationKeysForWrite(
+      { kind: "write", address: wallet, method: "register_agent", args: [] },
+      undefined,
+      { address: wallet, chainId: 61997 },
+    );
+
+    expect(keys).toEqual([walletAgentQueryKey(wallet, 61997)]);
+    expect(keys).not.toContainEqual(walletAgentQueryKey(otherWallet, 61997));
+    expect(
+      invalidationKeysForWrite({
+        kind: "write",
+        address: wallet,
+        method: "register_agent",
+        args: [],
+      }),
+    ).toEqual([]);
+  });
 });

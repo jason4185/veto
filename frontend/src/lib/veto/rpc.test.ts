@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   getRpcCooldownRemainingMs,
+  getVetoRpcDiagnostics,
+  recordRpcRetry,
   rateLimitCooldownMs,
   resetVetoRpcDiagnostics,
   runRpcRequest,
@@ -46,5 +48,55 @@ describe("shared VETO RPC request manager", () => {
     expect(
       rateLimitCooldownMs({ response: { headers: new Headers({ "retry-after": "9999" }) } }),
     ).toBe(120_000);
+  });
+
+  it("records bounded development context without exposing request arguments", async () => {
+    resetVetoRpcDiagnostics();
+    const request = vi.fn(async () => ({ ok: true }));
+    await Promise.all([
+      runRpcRequest({
+        key: "wallet-agent:wallet-a",
+        method: "get_agent_by_wallet",
+        context: {
+          source: "contract.read",
+          route: "/agents",
+          queryKey: "agent-by-wallet",
+          trigger: "query",
+          necessary: true,
+        },
+        request,
+      }),
+      runRpcRequest({
+        key: "wallet-agent:wallet-a",
+        method: "get_agent_by_wallet",
+        context: {
+          source: "contract.read",
+          route: "/agents",
+          queryKey: "agent-by-wallet",
+          trigger: "query",
+          necessary: true,
+        },
+        request,
+      }),
+    ]);
+
+    const diagnostics = getVetoRpcDiagnostics();
+    expect(diagnostics.requests).toBe(1);
+    expect(diagnostics.deduped).toBe(1);
+    recordRpcRetry({ source: "hooks", route: "/agents", queryKey: "agent-by-wallet" });
+    expect(getVetoRpcDiagnostics().retries).toBe(1);
+    expect(diagnostics.byContext).toEqual([
+      expect.objectContaining({
+        source: "contract.read",
+        route: "/agents",
+        queryKey: "agent-by-wallet",
+        trigger: "query",
+        necessary: true,
+        started: 1,
+        deduped: 1,
+      }),
+    ]);
+    expect(JSON.stringify(diagnostics)).not.toContain("wallet-a");
+    resetVetoRpcDiagnostics();
   });
 });

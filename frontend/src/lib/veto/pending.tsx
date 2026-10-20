@@ -340,13 +340,19 @@ export function PendingTransactionMonitor() {
           )
             void invalidateVetoQueries(
               queryClient,
-              invalidationKeysForWrite(pendingWrite(record), queryClient),
+              invalidationKeysForWrite(pendingWrite(record), queryClient, {
+                address: record.scope.sender,
+                chainId: record.scope.chainId,
+              }),
             );
         },
         onFinalized: () => {
           void invalidateVetoQueries(
             queryClient,
-            invalidationKeysForWrite(pendingWrite(record), queryClient),
+            invalidationKeysForWrite(pendingWrite(record), queryClient, {
+              address: record.scope.sender,
+              chainId: record.scope.chainId,
+            }),
           );
         },
       }),

@@ -5,7 +5,7 @@ import type { GenLayerClient } from "./client";
 import type { ContractWrite } from "./contract";
 import type { Challenge, Proposal } from "./domain";
 import { normalizeVetoError } from "./errors";
-import { rateLimitCooldownMs } from "./rpc";
+import { rateLimitCooldownMs, recordRpcRetry } from "./rpc";
 import {
   getAgent,
   getAgentCampaignClaimable,
@@ -54,6 +54,7 @@ function cachedResourceKeys(queryClient: QueryClient | undefined, resource: stri
 export function invalidationKeysForWrite(
   write: ContractWrite | null | undefined,
   queryClient?: QueryClient,
+  identity?: { address?: string | undefined; chainId?: number | undefined },
 ): QueryKey[] {
   if (!write) return [];
   const id =
@@ -65,11 +66,11 @@ export function invalidationKeysForWrite(
   const challengeId = id;
   switch (write.method) {
     case "register_agent":
-      return [vetoQueryKey("wallet-agent")];
+      return identity?.address ? [walletAgentQueryKey(identity.address, identity.chainId)] : [];
     case "update_agent":
       return [
         vetoQueryKey("agent", id),
-        vetoQueryKey("wallet-agent"),
+        ...(identity?.address ? [walletAgentQueryKey(identity.address, identity.chainId)] : []),
         vetoQueryKey("agent-challenges", id),
       ];
     case "create_campaign":
@@ -197,6 +198,7 @@ export async function invalidateVetoQueries(queryClient: QueryClient, keys: Quer
 export function shouldRetryVetoRead(failureCount: number, error: unknown) {
   const normalized = normalizeVetoError(error);
   if (normalized.kind !== "rpc_unavailable" && normalized.kind !== "rate_limited") return false;
+  recordRpcRetry({ queryKey: normalized.kind, necessary: true });
   return failureCount < 1;
 }
 const options = {
@@ -218,9 +220,10 @@ export function useVetoConfig() {
     queryFn: () => getConfig(),
     enabled,
     ...options,
-    // A wallet reconnect must re-check the live owner/operator mapping. The shared
-    // RPC layer still deduplicates simultaneous reads and there is no polling.
-    staleTime: 0,
+    // Configuration is deployment-scoped and does not depend on the connected wallet.
+    // The query key already changes when chain or contract configuration changes.
+    staleTime: Infinity,
+    refetchOnMount: false,
   });
 }
 export function useCampaigns(offset = 0, limit = 50) {
@@ -238,6 +241,7 @@ export function useMyCampaigns(
   limit = 50,
   creatorAddress?: string,
   client?: GenLayerClient,
+  includePolicies = false,
 ) {
   const walletReady = Boolean(creatorAddress && client);
   return useQuery({
@@ -246,11 +250,12 @@ export function useMyCampaigns(
       creatorAddress?.toLowerCase() ?? "disconnected",
       offset,
       limit,
+      includePolicies,
     ),
     queryFn: () => {
       if (!creatorAddress || !client)
         throw new Error("Connect a wallet to read creator campaigns.");
-      return getCreatorCampaigns(creatorAddress, offset, limit, client);
+      return getCreatorCampaigns(creatorAddress, offset, limit, client, includePolicies);
     },
     enabled: enabled && walletReady,
     ...options,

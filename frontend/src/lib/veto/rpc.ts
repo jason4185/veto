@@ -7,7 +7,31 @@ export type RpcMetric = {
   failed: number;
   deduped: number;
   rateLimited: number;
+  retries: number;
   totalDurationMs: number;
+};
+
+export type RpcContextMetric = {
+  source: string;
+  route: string;
+  queryKey: string;
+  trigger: string;
+  necessary: boolean;
+  started: number;
+  succeeded: number;
+  failed: number;
+  deduped: number;
+  rateLimited: number;
+  retries: number;
+  totalDurationMs: number;
+};
+
+export type RpcRequestContext = {
+  source?: string;
+  route?: string;
+  queryKey?: string;
+  trigger?: string;
+  necessary?: boolean;
 };
 
 export type VetoRpcDiagnostics = {
@@ -16,16 +40,21 @@ export type VetoRpcDiagnostics = {
   failures: number;
   deduped: number;
   rateLimited: number;
+  retries: number;
+  requestsLastMinute: number;
   cooldownRemainingMs: number;
   byMethod: RpcMetric[];
+  byContext: RpcContextMetric[];
 };
 
 const DEFAULT_RATE_LIMIT_COOLDOWN_MS = 15_000;
 const MIN_RATE_LIMIT_COOLDOWN_MS = 1_000;
 const MAX_RATE_LIMIT_COOLDOWN_MS = 120_000;
+const REQUEST_WINDOW_MS = 60_000;
 
 const inFlight = new Map<string, Promise<unknown>>();
 const metrics = new Map<string, RpcMetric>();
+const contextMetrics = new Map<string, RpcContextMetric>();
 let cooldownUntil = 0;
 let cooldownTimer: ReturnType<typeof setTimeout> | undefined;
 let requests = 0;
@@ -33,6 +62,8 @@ let successes = 0;
 let failures = 0;
 let deduped = 0;
 let rateLimited = 0;
+let retries = 0;
+const requestTimes: number[] = [];
 
 function metricFor(method: string) {
   const current = metrics.get(method);
@@ -44,10 +75,42 @@ function metricFor(method: string) {
     failed: 0,
     deduped: 0,
     rateLimited: 0,
+    retries: 0,
     totalDurationMs: 0,
   };
   metrics.set(method, created);
   return created;
+}
+
+function contextFor(context: RpcRequestContext | undefined): RpcContextMetric {
+  const route = context?.route ?? currentRoute();
+  const source = context?.source ?? "rpc";
+  const queryKey = context?.queryKey ?? "unknown";
+  const trigger = context?.trigger ?? "unknown";
+  const necessary = context?.necessary ?? true;
+  const key = JSON.stringify([source, route, queryKey, trigger, necessary]);
+  const current = contextMetrics.get(key);
+  if (current) return current;
+  const created: RpcContextMetric = {
+    source,
+    route,
+    queryKey,
+    trigger,
+    necessary,
+    started: 0,
+    succeeded: 0,
+    failed: 0,
+    deduped: 0,
+    rateLimited: 0,
+    retries: 0,
+    totalDurationMs: 0,
+  };
+  contextMetrics.set(key, created);
+  return created;
+}
+
+function currentRoute() {
+  return typeof window === "undefined" ? "server" : window.location.pathname || "/";
 }
 
 function publishDiagnostics() {
@@ -129,28 +192,47 @@ export function getRpcCooldownRemainingMs() {
 }
 
 export function getVetoRpcDiagnostics(): VetoRpcDiagnostics {
+  const cutoff = Date.now() - REQUEST_WINDOW_MS;
+  while (requestTimes[0] !== undefined && requestTimes[0] < cutoff) requestTimes.shift();
   return {
     requests,
     successes,
     failures,
     deduped,
     rateLimited,
+    retries,
+    requestsLastMinute: requestTimes.length,
     cooldownRemainingMs: getRpcCooldownRemainingMs(),
     byMethod: [...metrics.values()].map((metric) => ({ ...metric })),
+    byContext: [...contextMetrics.values()].map((metric) => ({ ...metric })),
   };
 }
 
 export function resetVetoRpcDiagnostics() {
   inFlight.clear();
   metrics.clear();
+  contextMetrics.clear();
   requests = 0;
   successes = 0;
   failures = 0;
   deduped = 0;
   rateLimited = 0;
+  retries = 0;
+  requestTimes.length = 0;
   cooldownUntil = 0;
   if (cooldownTimer) clearTimeout(cooldownTimer);
   cooldownTimer = undefined;
+  publishDiagnostics();
+}
+
+export function recordRpcRetry(context?: RpcRequestContext) {
+  retries += 1;
+  const metric = contextFor({
+    source: "react-query",
+    trigger: "retry",
+    ...context,
+  });
+  metric.retries += 1;
   publishDiagnostics();
 }
 
@@ -159,17 +241,21 @@ export async function runRpcRequest<T>({
   method,
   request,
   priority = "user",
+  context,
 }: {
   key: string;
   method: string;
   request: () => Promise<T>;
   priority?: RpcPriority;
+  context?: RpcRequestContext;
 }): Promise<T> {
   void priority;
+  const contextMetric = contextFor(context);
   const existing = inFlight.get(key);
   if (existing) {
     deduped += 1;
     metricFor(method).deduped += 1;
+    contextMetric.deduped += 1;
     publishDiagnostics();
     return existing as Promise<T>;
   }
@@ -179,6 +265,7 @@ export async function runRpcRequest<T>({
     const error = new VetoRpcRateLimitError(remaining);
     rateLimited += 1;
     metricFor(method).rateLimited += 1;
+    contextMetric.rateLimited += 1;
     publishDiagnostics();
     throw error;
   }
@@ -186,24 +273,30 @@ export async function runRpcRequest<T>({
   const metric = metricFor(method);
   const startedAt = performance.now();
   requests += 1;
+  requestTimes.push(Date.now());
   metric.started += 1;
+  contextMetric.started += 1;
   const task = (async () => {
     try {
       const result = await request();
       successes += 1;
       metric.succeeded += 1;
+      contextMetric.succeeded += 1;
       return result;
     } catch (reason) {
       failures += 1;
       metric.failed += 1;
+      contextMetric.failed += 1;
       if (isRpcRateLimitError(reason)) {
         rateLimited += 1;
         metric.rateLimited += 1;
+        contextMetric.rateLimited += 1;
         beginCooldown(reason);
       }
       throw reason;
     } finally {
       metric.totalDurationMs += Math.round(performance.now() - startedAt);
+      contextMetric.totalDurationMs += Math.round(performance.now() - startedAt);
       publishDiagnostics();
     }
   })();

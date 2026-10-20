@@ -6,6 +6,7 @@ import {
   verifySuccessfulDecision,
   verifySuccessfulTransaction,
 } from "./transaction";
+import { getVetoTransaction } from "./client";
 
 const finalized = {
   statusName: "FINALIZED",
@@ -151,5 +152,12 @@ describe("finalized transaction verification", () => {
     await expect(verifySuccessfulTransaction(status({}), client as never)).rejects.toThrow(
       "not finalized successfully",
     );
+  });
+
+  it("reuses a finalized receipt for post-finality verification", async () => {
+    const client = { getTransaction: vi.fn().mockResolvedValue(finalized) };
+    await getVetoTransaction(client as never, "0xcached-receipt");
+    await getVetoTransaction(client as never, "0xcached-receipt");
+    expect(client.getTransaction).toHaveBeenCalledTimes(1);
   });
 });
