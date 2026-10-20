@@ -12,8 +12,11 @@ import {
   challengeEvaluationAvailable,
   connectionState,
   formatDuration,
+  formatPolicy,
   formatGen,
   isAddress,
+  maxPaymentPolicy,
+  parseWholeGen,
   positiveGen,
   requiredCampaignFunding,
   preflightEvidence,
@@ -157,6 +160,8 @@ export function CreatorForm() {
   const config = configQuery.data;
   const minimumDuration = config?.minDuration ?? 3600;
   const maximumDuration = config?.maxDuration ?? 30 * 24 * 60 * 60;
+  const [policyType, setPolicyType] = useState<"payment_limit" | "custom">("payment_limit");
+  const [paymentLimitGen, setPaymentLimitGen] = useState("");
   const durationOptions = Array.from(
     new Set([minimumDuration, 3600, 86400, 3 * 86400, 7 * 86400, maximumDuration]),
   )
@@ -184,10 +189,14 @@ export function CreatorForm() {
     try {
       const name = String(form.get("name") ?? "").trim();
       const description = String(form.get("description") ?? "").trim();
-      const policies = String(form.get("policies") ?? "")
-        .split("\n")
-        .map((value) => value.trim())
-        .filter(Boolean);
+      const selectedPolicyType = String(form.get("policyType") ?? "payment_limit");
+      const policies =
+        selectedPolicyType === "payment_limit"
+          ? [maxPaymentPolicy(parseWholeGen(String(form.get("paymentLimitGen") ?? "")))]
+          : String(form.get("customPolicies") ?? "")
+              .split("\n")
+              .map((value) => value.trim())
+              .filter(Boolean);
       const maxAgents = Number(form.get("maxAgents"));
       const reward = positiveGen(String(form.get("reward") ?? ""));
       const durationSeconds = Number(form.get("durationSeconds"));
@@ -283,20 +292,76 @@ export function CreatorForm() {
         <div className="form-section">
           <h2 className="form-section-title">02 / Governing policy</h2>
           <Field
-            label="Policy lines"
-            hint="One policy per line. Use MAX_PAYMENT_WEI:<wei> for a deterministic on-chain payment cap; other rules require authority-authenticated evidence before rewards."
+            label="Policy type"
+            hint="Use a typed payment limit for deterministic on-chain checks, or write custom rules for authority-authenticated semantic evaluation."
           >
-            <textarea
-              aria-label="Policy lines"
-              name="policies"
-              maxLength={VETO_LIMITS.policiesBytes}
+            <select
+              aria-label="Policy type"
+              name="policyType"
+              value={policyType}
+              onChange={(event) => {
+                setPolicyType(event.target.value as "payment_limit" | "custom");
+                setReview(undefined);
+                setConfirmed(false);
+              }}
               required
-              rows={5}
-              placeholder={
-                "Define a clear, verifiable rule.\nAdd the evidence needed to check compliance."
-              }
-            />
+            >
+              <option value="payment_limit">Treasury payment limit</option>
+              <option value="custom">Custom governance policy</option>
+            </select>
           </Field>
+          {policyType === "payment_limit" ? (
+            <Field
+              label="Maximum payment allowed (GEN)"
+              hint="Enter a positive whole-GEN amount. VETO converts it to the exact Wei policy required by the contract."
+            >
+              <div className="input-unit">
+                <input
+                  aria-label="Maximum payment allowed (GEN)"
+                  name="paymentLimitGen"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  placeholder="2"
+                  value={paymentLimitGen}
+                  required
+                  autoComplete="off"
+                  onChange={(event) => {
+                    setPaymentLimitGen(event.target.value);
+                    setReview(undefined);
+                    setConfirmed(false);
+                  }}
+                />
+                <span>GEN</span>
+              </div>
+              <small>
+                No single treasury payment may exceed{" "}
+                {paymentLimitGen.trim()
+                  ? `${paymentLimitGen.trim()} GEN`
+                  : "the amount you enter in GEN"}
+                .
+              </small>
+            </Field>
+          ) : (
+            <Field
+              label="Custom policy lines"
+              hint="One policy per line. Custom rules use semantic evaluation and require authority-authenticated evidence before rewards."
+            >
+              <textarea
+                aria-label="Custom policy lines"
+                name="customPolicies"
+                maxLength={VETO_LIMITS.policiesBytes}
+                required
+                rows={5}
+                placeholder={
+                  "Define a clear, verifiable rule.\nAdd the evidence needed to check compliance."
+                }
+                onChange={() => {
+                  setReview(undefined);
+                  setConfirmed(false);
+                }}
+              />
+            </Field>
+          )}
         </div>
         <div className="form-section">
           <h2 className="form-section-title">03 / Fixed competition terms</h2>
@@ -370,11 +435,18 @@ export function CreatorForm() {
               </dd>
             </dl>
             <div className="detail-block">
-              <h3>Policy review</h3>
+              <h3>Governing policy</h3>
               {review.policies.map((policy, index) => (
-                <p key={policy}>
-                  {index + 1}. {policy}
-                </p>
+                <div key={`${index}-${policy}`}>
+                  <p>
+                    {index + 1}. <strong>{formatPolicy(policy)}</strong>
+                  </p>
+                  {formatPolicy(policy) !== policy && (
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Contract format: <code>{policy}</code>
+                    </p>
+                  )}
+                </div>
               ))}
             </div>
             <div className="review-warning">
@@ -1185,7 +1257,7 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
                 </p>
               )}
               <h3>Applicable policy</h3>
-              <p>{proposal.applicablePolicy}</p>
+              <p>{formatPolicy(proposal.applicablePolicy)}</p>
               {proposal.policyLimitWei && proposal.policyLimitWei > 0n ? (
                 <p className="text-xs text-muted-foreground mt-2">
                   Deterministic limit: {formatGen(proposal.policyLimitWei)} GEN. The contract
@@ -1775,7 +1847,7 @@ export function FundedProposalForm() {
           <option value="">Select policy</option>
           {campaign?.policies.map((policy, index) => (
             <option key={index} value={index + 1}>
-              {index + 1}. {policy}
+              {index + 1}. {formatPolicy(policy)}
             </option>
           ))}
         </select>
@@ -1784,8 +1856,8 @@ export function FundedProposalForm() {
         <p className="text-xs text-muted-foreground">
           {(() => {
             const text = campaign.policies[review.policyIndex - 1] ?? "";
-            return text.startsWith("MAX_PAYMENT_WEI:")
-              ? "This proposal will be checked deterministically against the typed payment limit."
+            return formatPolicy(text) !== text
+              ? `This proposal will be checked deterministically against: ${formatPolicy(text)}.`
               : "This semantic policy requires independently authenticated evidence before a finding can earn GEN.";
           })()}
         </p>
@@ -1809,7 +1881,9 @@ export function FundedProposalForm() {
             <dt>Separate escrow</dt>
             <dd>{formatGen(review.amount)} GEN</dd>
             <dt>Applicable policy</dt>
-            <dd>{review.policyIndex}</dd>
+            <dd>
+              {review.policyIndex}. {formatPolicy(campaign.policies[review.policyIndex - 1] ?? "")}
+            </dd>
           </dl>
           <div className="review-warning">
             <strong>Proposal escrow is separate.</strong>

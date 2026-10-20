@@ -17,6 +17,7 @@ import {
   connectionState,
   formatDuration,
   formatGen,
+  formatPolicy,
   integrationMessage,
   normalizeContractId,
   shortAddress,
@@ -198,8 +199,8 @@ function CampaignPage() {
           <div className="detail-block">
             <h3>Governing policies</h3>
             {campaign.policies.map((policy, index) => (
-              <p key={policy}>
-                {index + 1}. {policy}
+              <p key={`${index}-${policy}`}>
+                {index + 1}. {formatPolicy(policy)}
               </p>
             ))}
           </div>

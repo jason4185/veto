@@ -14,6 +14,7 @@ import {
   challengeEvaluationAvailable,
   connectionState,
   formatGen,
+  formatPolicy,
   integrationMessage,
   normalizeContractId,
   resolutionStep,
@@ -213,7 +214,7 @@ function ProposalPage() {
         <div>
           <div className="detail-block">
             <h3>Immutable policy</h3>
-            <p>{proposal.applicablePolicy}</p>
+            <p>{formatPolicy(proposal.applicablePolicy)}</p>
             <p className="text-xs text-muted-foreground mt-2">
               {proposal.policyLimitWei && proposal.policyLimitWei > 0n
                 ? `Deterministic payment limit: ${formatGen(proposal.policyLimitWei)} GEN. The contract compares the actual escrow amount directly.`

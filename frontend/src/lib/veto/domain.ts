@@ -1,5 +1,6 @@
 export const GEN_DECIMALS = 18;
 export const GEN_WEI = 10n ** 18n;
+export const MAX_U256 = (1n << 256n) - 1n;
 export const TYPED_POLICY_PREFIX = "MAX_PAYMENT_WEI:";
 export const VETO_LIMITS = {
   nameBytes: 120,
@@ -241,6 +242,32 @@ export function positiveGen(value: string): bigint {
   const amount = parseGen(value);
   if (amount <= 0n) throw new Error("GEN amount must be greater than zero.");
   return amount;
+}
+
+export function parseWholeGen(value: string): bigint {
+  const normalized = value.trim();
+  if (!normalized) throw new Error("Enter a maximum payment in whole GEN.");
+  if (!/^\d+$/.test(normalized)) throw new Error("Enter a positive whole GEN amount, such as 2.");
+  const whole = BigInt(normalized);
+  if (whole <= 0n) throw new Error("The maximum payment must be greater than zero.");
+  if (whole > MAX_U256 / GEN_WEI)
+    throw new Error("That maximum payment exceeds the contract's supported limit.");
+  return whole * GEN_WEI;
+}
+
+export function maxPaymentPolicy(limitWei: bigint): string {
+  if (limitWei <= 0n || limitWei > MAX_U256)
+    throw new Error("The maximum payment must fit the contract's supported integer range.");
+  return `${TYPED_POLICY_PREFIX}${limitWei.toString()}`;
+}
+
+export function formatPolicy(policy: string): string {
+  if (!policy.startsWith(TYPED_POLICY_PREFIX)) return policy;
+  const raw = policy.slice(TYPED_POLICY_PREFIX.length);
+  if (!/^\d+$/.test(raw)) return policy;
+  const limitWei = BigInt(raw);
+  if (limitWei <= 0n || limitWei > MAX_U256) return policy;
+  return `Maximum treasury payment: ${formatGen(limitWei)} GEN`;
 }
 
 export function formatGen(value: bigint): string {

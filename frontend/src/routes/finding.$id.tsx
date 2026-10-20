@@ -15,6 +15,7 @@ import {
   challengeEvaluationAvailable,
   connectionState,
   formatGen,
+  formatPolicy,
   integrationMessage,
   normalizeContractId,
   resolutionStep,
@@ -247,7 +248,7 @@ function FindingPage() {
               </dd>
               <dt>Applicable policy</dt>
               <dd>
-                Policy #{proposal.applicablePolicyIndex}: {proposal.applicablePolicy}
+                Policy #{proposal.applicablePolicyIndex}: {formatPolicy(proposal.applicablePolicy)}
                 {proposal.policyLimitWei && proposal.policyLimitWei > 0n ? (
                   <span className="block text-xs text-muted-foreground mt-1">
                     Deterministic on-chain limit: {formatGen(proposal.policyLimitWei)} GEN

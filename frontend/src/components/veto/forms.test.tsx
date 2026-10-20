@@ -214,16 +214,24 @@ function renderFundedProposal() {
   );
 }
 
-function prepareReview() {
+function prepareReview(policyType: "payment_limit" | "custom" = "custom") {
   fireEvent.change(screen.getByLabelText("Campaign name"), {
     target: { value: "Two-agent review" },
   });
   fireEvent.change(screen.getByLabelText("Description"), {
     target: { value: "Review funded governance proposals." },
   });
-  fireEvent.change(screen.getByLabelText("Policy lines"), {
-    target: { value: "Payments require two approvals." },
+  fireEvent.change(screen.getByLabelText("Policy type"), {
+    target: { value: policyType },
   });
+  if (policyType === "custom")
+    fireEvent.change(screen.getByLabelText("Custom policy lines"), {
+      target: { value: "Payments require two approvals." },
+    });
+  else
+    fireEvent.change(screen.getByLabelText("Maximum payment allowed (GEN)"), {
+      target: { value: "2" },
+    });
   fireEvent.change(screen.getByLabelText("Maximum participating agents"), {
     target: { value: "2" },
   });
@@ -271,6 +279,46 @@ describe("CreatorForm funding action", () => {
       expect(screen.getByRole("dialog", { name: "VETO transaction" })).toBeVisible(),
     );
     expect(screen.getByRole("dialog")).toHaveTextContent("2000000000000000000 wei");
+  });
+
+  it("converts a structured 2 GEN limit in the review and contract arguments", async () => {
+    renderCreator();
+    prepareReview("payment_limit");
+
+    expect(screen.getByText("No single treasury payment may exceed 2 GEN.")).toBeVisible();
+    expect(screen.getByText("Maximum treasury payment: 2 GEN")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "Confirm & fund campaign" }));
+
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeVisible());
+    expect(mocks.lastWrite?.args[2]).toBe("MAX_PAYMENT_WEI:2000000000000000000");
+  });
+
+  it("preserves newline-separated custom policies and their order", async () => {
+    renderCreator();
+    fireEvent.change(screen.getByLabelText("Campaign name"), {
+      target: { value: "Custom policy campaign" },
+    });
+    fireEvent.change(screen.getByLabelText("Description"), {
+      target: { value: "Review custom policy ordering." },
+    });
+    fireEvent.change(screen.getByLabelText("Policy type"), {
+      target: { value: "custom" },
+    });
+    fireEvent.change(screen.getByLabelText("Custom policy lines"), {
+      target: { value: "First rule\nSecond rule" },
+    });
+    fireEvent.change(screen.getByLabelText("Maximum participating agents"), {
+      target: { value: "1" },
+    });
+    fireEvent.change(screen.getByLabelText("Reward per accepted winner"), {
+      target: { value: "1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Review fixed budget" }));
+    fireEvent.click(screen.getByRole("checkbox"));
+    fireEvent.click(screen.getByRole("button", { name: "Confirm & fund campaign" }));
+
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeVisible());
+    expect(mocks.lastWrite?.args[2]).toBe("First rule\nSecond rule");
   });
 
   it("keeps the funding button actionable and requests a disconnected wallet", async () => {

@@ -4,11 +4,15 @@ import {
   agentControlsWallet,
   challengeEvaluationAvailable,
   chainConfig,
+  formatPolicy,
   formatDuration,
   formatGen,
   isContractId,
+  MAX_U256,
+  maxPaymentPolicy,
   normalizeContractId,
   parseGen,
+  parseWholeGen,
   positiveGen,
   preflightEvidence,
   requiredCampaignFunding,
@@ -32,6 +36,42 @@ describe("exact GEN amounts", () => {
   });
   it("has correct chain hex", () =>
     expect(Number.parseInt(chainConfig.chainHex, 16)).toBe(chainConfig.chainId));
+});
+describe("structured treasury payment policies", () => {
+  it.each([
+    ["1", 1_000_000_000_000_000_000n],
+    ["2", 2_000_000_000_000_000_000n],
+    ["3", 3_000_000_000_000_000_000n],
+    ["10", 10_000_000_000_000_000_000n],
+  ])("converts %s whole GEN to exact Wei", (input, expected) => {
+    expect(parseWholeGen(input)).toBe(expected);
+  });
+
+  it("accepts the largest whole-GEN amount that fits after Wei conversion", () => {
+    const maximumWholeGen = MAX_U256 / 1_000_000_000_000_000_000n;
+    expect(parseWholeGen(maximumWholeGen.toString())).toBe(
+      maximumWholeGen * 1_000_000_000_000_000_000n,
+    );
+    expect(() => parseWholeGen((maximumWholeGen + 1n).toString())).toThrow("supported limit");
+  });
+
+  it("rejects empty, zero, negative, fractional, scientific and invalid input", () => {
+    for (const value of ["", "0", "-1", "2.5", "1e3", "2 GEN", "2_000"])
+      expect(() => parseWholeGen(value)).toThrow();
+  });
+
+  it("serializes the exact contract policy and formats recognized policies", () => {
+    const policy = maxPaymentPolicy(parseWholeGen("2"));
+    expect(policy).toBe("MAX_PAYMENT_WEI:2000000000000000000");
+    expect(formatPolicy(policy)).toBe("Maximum treasury payment: 2 GEN");
+  });
+
+  it("preserves custom and malformed policy text without guessing", () => {
+    const custom = "Treasury funds require approved security audits.";
+    const malformed = "MAX_PAYMENT_WEI:not-a-number";
+    expect(formatPolicy(custom)).toBe(custom);
+    expect(formatPolicy(malformed)).toBe(malformed);
+  });
 });
 describe("fixed-budget competition terms", () => {
   it("calculates the exact required funding without floating point", () => {

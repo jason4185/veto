@@ -20,6 +20,7 @@ import {
 import { VetoReadError } from "./errors";
 import { vetoContractAddress } from "./network";
 import { resetVetoRpcDiagnostics } from "./rpc";
+import { maxPaymentPolicy, parseWholeGen } from "./domain";
 
 describe("VETO contract write adapter", () => {
   it("always encodes explicit operator and payout addresses", () => {
@@ -70,6 +71,21 @@ describe("VETO contract write adapter", () => {
       ],
       value: 20_000_000_000_000_000_000n,
     });
+  });
+
+  it("passes the structured GEN policy through unchanged to create_campaign", () => {
+    const write = createCampaignWrite({
+      name: "Treasury limit",
+      description: "Review payment limits.",
+      policies: [maxPaymentPolicy(parseWholeGen("2"))],
+      maxAgents: 1,
+      reward: 1_000_000_000_000_000_000n,
+      durationSeconds: 3_600,
+    });
+
+    expect(write.method).toBe("create_campaign");
+    expect(write.args[2]).toBe("MAX_PAYMENT_WEI:2000000000000000000");
+    expect(write.value).toBe(1_000_000_000_000_000_000n);
   });
 
   it("keeps proposal escrow separate and preserves exact challenge arguments", () => {
