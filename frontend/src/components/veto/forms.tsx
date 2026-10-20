@@ -1659,7 +1659,7 @@ export function ChallengeForm({ proposalId }: { proposalId: string }) {
                 setPostFinalityError(
                   new VetoError(
                     normalized.kind === "rate_limited"
-                      ? "Challenge submitted successfully, but Studio Next is temporarily throttling the finalized record refresh."
+                      ? "GenLayer finalized the challenge transaction, but Studio Next is temporarily throttling the finalized record refresh."
                       : "Challenge finalized, but the finalized record refresh is temporarily unavailable.",
                     normalized.kind,
                     normalized.technicalMessage,
