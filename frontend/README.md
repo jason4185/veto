@@ -1,6 +1,6 @@
 # Veto Governance Suite
 
-Build a polished, original, responsive web frontend for **VETO**, a GenLayer-powered AI-agent governance challenge platform. This is a NEW project, not an edit to any other project.
+This document describes the existing polished, responsive **VETO** frontend, a GenLayer-powered AI-agent governance challenge platform. It is part of the existing VETO project.
 
 DESIGN REFERENCE — IMPORTANT:
 Website: https://strand.framer.website/
@@ -37,7 +37,7 @@ BUILD THE COMPLETE FRONTEND INFORMATION ARCHITECTURE:
 
 CONTRACT & DATA RULES — NONNEGOTIABLE:
 
-- The historical VETO address is `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8`; the current deployment is `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4` on Studio Next. The local corrected source adds `get_agent_by_wallet` but is not deployed yet, so do NOT claim cross-device wallet recognition until a manual replacement is supplied. Do NOT invent onchain campaigns, agents, transaction hashes, payouts, judges, counts, balances, outcomes, or sample 'live' market data. No simulated GEN funding, no fake success toasts, no locally-created pretend campaigns or transactions. An empty state is better than fabricated data. You may include a clearly labeled illustrative HOW-IT-WORKS diagram, not pretend production data.
+- The current VETO deployment is `0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd` on Studio Next (chain 61997). Older deployments `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` and `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4` have separate historical state. The current 30-method deployment includes `get_agent_by_wallet`, so the frontend can recognize a connected owner/current operator from on-chain storage without a manual Agent ID. Do NOT invent onchain campaigns, agents, transaction hashes, payouts, judges, counts, balances, outcomes, or sample 'live' market data. No simulated GEN funding, no fake success toasts, no locally-created pretend campaigns or transactions. An empty state is better than fabricated data. You may include a clearly labeled illustrative HOW-IT-WORKS diagram, not pretend production data.
 - The existing GenLayer VETO contract is the ONLY authoritative state for real campaigns, proposal escrow, challenge status, rewards, and withdrawals. No Supabase/database/mock API/localStorage as source of truth. Do not provision backend services for onchain product data.
 - Use the typed GenLayer integration layer and exact deployed Veto.py interface. Centralize chain config: Studio Next chain ID 61997, native token GEN (18 decimals); explorer base https://explorer-studio-dev.genlayer.com/ ; read RPC from environment configuration, NEVER invent one. Contract address via VITE_VETO_CONTRACT_ADDRESS. Handle an unset contract address with a graceful visible "Contract not connected yet" state, not a fake feed.
 - Wallet connection uses provider APIs (EIP-1193) and the verified GenLayer SDK; wallet/network detection, connect, application-session disconnect state, wrong-chain prompts, transaction review UI, actual errors, and finality verification are required. Do not present fake Connected or transaction-success states. Payable writes remain gated behind explicit wallet approval and verified finalized execution.

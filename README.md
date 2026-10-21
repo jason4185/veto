@@ -2,7 +2,7 @@
 
 VETO is a GenLayer-powered governance security platform for scrutinizing treasury proposals before funds move. Creators launch GEN-funded campaigns, define governance policies, and publish spending proposals. Registered agents investigate those proposals and submit evidence when they identify a possible policy violation. GenLayer evaluates the evidence against the applicable policy; the first eligible valid challenge in proposal order can veto the payment and make a GEN reward claimable.
 
-The repository contains the corrected VETO GenLayer contract, its host-emulation and static tests, and a Lovable-designed TanStack frontend. The `netlify-evidence/` directory is reserved for controlled evidence fixtures. The corrected source is prepared for manual Studio Next deployment; the current deployment and historical deployment remain unchanged.
+The repository contains the corrected VETO GenLayer contract, its host-emulation and static tests, and a Lovable-designed TanStack frontend. The `netlify-evidence/` directory is reserved for controlled evidence fixtures. The current Studio Next deployment is the 30-method corrected deployment listed below; older addresses are retained only as historical, separate deployments.
 
 ## Overview
 
@@ -215,12 +215,12 @@ The current deployment target is GenLayer Studio Next, not GenLayer mainnet.
 | Chain ID                  | `61997`                                                                                                                                     |
 | RPC                       | `https://studio-next.genlayer.com/api`                                                                                                      |
 | Current deployed contract | [`0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd`](https://explorer-studio-dev.genlayer.com/address/0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd) |
-| Historical contract       | [`0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8`](https://explorer-studio-dev.genlayer.com/address/0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8) |
+| Historical contracts      | `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` and `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4` (separate, retired state)                         |
 | Explorer                  | [GenLayer Studio Explorer](https://explorer-studio-dev.genlayer.com/)                                                                       |
 | Local source size         | 51,986 UTF-8 bytes                                                                                                                          |
 | Local source SHA-256      | `6041e7b033e9ab619e784412fce3becc9ce1214e850d09375ee3aca784b3016d`                                                                          |
 
-The current deployed address exposes the 30-method interface, including `get_agent_by_wallet`, and was verified read-only against Studio Next. The historical address was not modified and has separate state. No campaign funding or GEN transfer was performed during this verification.
+The current deployed address exposes the 30-method interface, including `get_agent_by_wallet`, and was verified read-only against Studio Next. Historical deployments were not modified and have separate state. The live test campaign described below is on the current address; no new transaction was executed during this documentation audit.
 
 ## Running Locally
 
@@ -286,18 +286,30 @@ The repository was checked locally before publication:
 | GenVM AST lint                            | Passed.                                                                                                                                                                                                                                                                                                                                                                                                         |
 | GenVM validation                          | Exact v0.6.0-rc6 manager/executor ran initialization, typed objective evaluations, invalid constraints, authority/context gates, cross-role identity rejection, and external-message emission. Stock `genvm-lint check` remains blocked by `E101` because it expects a `.tar` runner member while the official bundle supplies the exact runner as `.zip`; nondeterministic validator execution is not claimed. |
 | Frontend TypeScript                       | Passed with `bunx tsc --noEmit`.                                                                                                                                                                                                                                                                                                                                                                                |
-| Frontend Vitest                           | **91 tests passed** across 11 files, including malformed-registration, finalized-return, and wallet-agent verification regressions.                                                                                                                                                                                                                                                                             |
-| Frontend ESLint                           | Passed with 0 errors and 15 existing Fast Refresh warnings.                                                                                                                                                                                                                                                                                                                                                     |
+| Frontend Vitest                           | **117 tests passed** across 11 files, including malformed-registration, finalized-return, wallet-agent verification, and RPC/finality regressions.                                                                                                                                                                                                                                                               |
+| Frontend ESLint                           | Passed with 0 errors and 18 existing Fast Refresh warnings.                                                                                                                                                                                                                                                                                                                                                     |
 | Frontend Prettier                         | Passed with `bunx prettier --check .`.                                                                                                                                                                                                                                                                                                                                                                          |
 | Frontend production build                 | Passed with `bun run build`; Vite/Nitro emitted advisory chunk-size and configuration warnings only.                                                                                                                                                                                                                                                                                                            |
 
 The contract tests cover fixed funding, campaign and proposal lifecycle rules, ordered challenge resolution, evidence validation, authorization, pagination, claims, refunds, and accounting reconciliation. Frontend tests cover adapter parsing, sender-scoped reads, wallet-associated agent metadata, route/ID handling, forms, and transaction refresh behavior.
 
-These results are not a claim that the complete reward and settlement lifecycle has been executed on Studio Next. The current deployment’s wallet view was read-verified, while the local source and frontend fixes still require the normal production build rollout. No campaign funding or GEN transfer was performed. Live multi-validator finality, native transfer receipts, and production evidence provenance require separate Studio Next verification.
+These local results are not a claim that the complete reward and settlement lifecycle has been executed on Studio Next. The current deployment and its test campaign were read-verified, but live native-transfer delivery, semantic-authority provenance, and a complete settlement receipt chain remain separately unverified. The latest frontend changes are committed here; Vercel production configuration and rollout were not changed or independently verified in this audit.
+
+### Read-only live test evidence
+
+The following state was read from the current deployment during this audit. It is not simulated data:
+
+- Campaign `1`, `VETO Treasury Security Test`, is `CLOSED`; its stored policy is `MAX_PAYMENT_WEI:2000000000000000000` (2 GEN).
+- Proposal `1` stores 3 GEN, has a 2 GEN limit, and is `VETOED`. Challenge `1` is `VALID`, `accepted=true`, `evidence_status=DETERMINISTIC`, and its winner is Agent `1`.
+- Proposal `2` stores 1 GEN, is `CLEARED` with escrow state `PAID`. Challenge `2` is `INVALID`, `accepted=false`, `evidence_status=DETERMINISTIC`, and `policy_match=false`.
+- `get_agent_by_wallet` returns Agent `1` for `0xC8Ba5DA455b011863F2ECa76a6fa21E62Cc91B87` and Agent `2` for `0x69885Aeb09f8cB62FFF8b2224C66791bFCaed317`.
+- Global accounting reads 2 GEN reward funded / 1 GEN paid / 1 GEN available, and 4 GEN escrow funded / 3 GEN locked / 1 GEN paid. The campaign read reports `remainder_claimed=false`; no remainder transfer is claimed here.
+
+The finalized genuine challenge submission receipt is `0x1c632d2093423d08fbe20b48949e66d282de4a1bbf9a4e7f43436e12a8d9084f`: it targets the current contract, decodes to `submit_challenge(1, 1, ...)`, is `Finalized · Accepted`, returns `1`, and reports successful GenVM execution. The false-challenge hash supplied for Challenge `2` was not retrievable through the current receipt endpoint during this audit, so its claim is supported here by the authoritative challenge/proposal state reads, not by a re-presented receipt. Evaluation, reward-claim, refund, and remainder transaction hashes were not located; they are not invented.
 
 ### Registration incident trace
 
-The only transaction found from the reported wallet (`0xC8Ba5DA455b011863F2ECa76a6fa21E62Cc91B87`) to the current deployment was `0x9896d1dfe7ae93dc30f1422e78dc8cef3edc97f3c43362b6030b7a7d9848954d`. It finalized with `FINISHED_WITH_RETURN`, but decoded calldata was `{}` and the leader return payload was `null`; it was not a `register_agent` call. Read-only state confirmed `get_agent_by_wallet(wallet) == 0`, `get_campaign_count() == 0`, and zero global accounting, so no agent was registered.
+The earlier registration-incident candidate transaction from the reported wallet (`0xC8Ba5DA455b011863F2ECa76a6fa21E62Cc91B87`) was `0x9896d1dfe7ae93dc30f1422e78dc8cef3edc97f3c43362b6030b7a7d9848954d`. It finalized with `FINISHED_WITH_RETURN`, but decoded calldata was `{}` and the leader return payload was `null`; it was not a `register_agent` call. At that time, read-only state confirmed `get_agent_by_wallet(wallet) == 0`, `get_campaign_count() == 0`, and zero global accounting. This historical incident record must not be confused with the later finalized Agent 1 registration and live campaign evidence listed above.
 
 An older deployment transaction, `0x896849a7e6c273bff8626c2f9c7ba9a88dcd840e779b9b9f239e8cdd594423af`, did encode `register_agent` with empty optional operator/payout fields, but its actual leader rollback was `[EXPECTED] owner already used` and its execution result was `FINISHED_WITH_ERROR`. That is consistent with the wallet already having an agent on the older deployment; the empty optional fields were not the reported runtime cause. These are distinct outcomes: the current candidate was a successful empty/no-op call, while the older call was a genuine duplicate-owner rejection. The production bundle inspected during this investigation embedded the current address and `register_agent` method, but Studio does not expose the user’s UI intent, so the available evidence cannot prove why the empty current call was created.
 
@@ -312,7 +324,7 @@ The frontend fix makes blank operator and payout fields explicit owner addresses
 - Full nondeterministic validator execution through the stock linter, live validator rounds, external ghost-transfer receipts, Vercel configuration, and migration remain unverified in this worktree. Exact local manager/executor execution is evidence for the deterministic contract paths only, not a substitute for live validator or ghost verification.
 - A proposal's reward pool and payment escrow are separate; UI balances must not be interpreted as interchangeable.
 - Studio Next is a development network. This repository does not claim a mainnet deployment or an independent third-party security audit.
-- The local contract exposes `get_agent_by_wallet(wallet_address)` for direct current owner/operator discovery. The currently deployed older address does not yet expose it, so the frontend's remembered ID is only a compatibility hint and is revalidated on-chain.
+- The current deployment exposes `get_agent_by_wallet(wallet_address)` for direct current owner/operator discovery. The historical deployments do not provide that view, so the frontend's remembered ID is only a compatibility hint on those addresses and is revalidated on-chain.
 - The pinned runner is locally available through the current official manager bundle. The stock linter cannot consume its `.zip` layout, while the compatible manager/executor path can execute deterministic cases locally. Live validator behavior, ghost delivery and receipts remain environment-dependent.
 
 For a detailed source-level review, see [`docs/VETO_AUDIT.md`](docs/VETO_AUDIT.md). The exact interface and lifecycle notes are in [`docs/VETO_INTERFACE.md`](docs/VETO_INTERFACE.md).
@@ -340,5 +352,5 @@ veto/
 ## Repository and Contract Links
 
 - Source repository: [github.com/jason4185/veto](https://github.com/jason4185/veto)
-- Contract explorer: [VETO V1 on GenLayer Studio Explorer](https://explorer-studio-dev.genlayer.com/address/0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8)
+- Contract explorer: [current VETO V1 deployment on GenLayer Studio Explorer](https://explorer-studio-dev.genlayer.com/address/0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd)
 - Network explorer: [explorer-studio-dev.genlayer.com](https://explorer-studio-dev.genlayer.com/)

@@ -2,7 +2,7 @@
 
 ## Scope and deployment safety
 
-This report covers the current local [`contracts/Veto.py`](../contracts/Veto.py). The current deployed address `0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd` and historical address `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` were not modified. The current address exposes the wallet-lookup method and was checked read-only; no new deployment or GEN transaction was performed, and Vercel was not changed.
+This report covers the current local [`contracts/Veto.py`](../contracts/Veto.py). The current deployed address `0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd` and historical addresses `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` and `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4` were not modified. The current address exposes the wallet-lookup method and was checked read-only; no new deployment or GEN transaction was performed, and Vercel was not changed.
 
 The remediation remains one VETO contract project. `docs/VETO_V2_ARCHITECTURE.md` is a retained design filename, not a second codebase.
 
@@ -10,8 +10,8 @@ The remediation remains one VETO contract project. `docs/VETO_V2_ARCHITECTURE.md
 
 | PAPITO concern        | Local result                                                      | Proof boundary                                                                                                                                                                                                                                                                      |
 | --------------------- | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Fabricated evidence   | **Partially remediated locally; not closed as independent proof** | Objective rules are deterministic; semantic rules require a one-time on-chain authority record. The authority is an explicit trust root, not a claim of decentralized real-world truth.                                                                                             |
-| Owner/operator bypass | **Fixed locally; current interface read-verified**                | One shared identity reservation map covers registration, replacement, retired operators, active status, participation, and direct wallet lookup. Person-level Sybil across unrelated wallets remains impossible to prevent here.                                                    |
+| Fabricated evidence   | **Objective path fixed and live-verified; semantic authority remains a trust limitation** | Objective rules are deterministic; semantic rules require a one-time on-chain authority record. The authority is an explicit trust root, not a claim of decentralized real-world truth.                                                   |
+| Owner/operator bypass | **Fixed and live-verified for the demonstrated cross-role path**  | One shared identity reservation map covers registration, replacement, retired operators, active status, participation, and direct wallet lookup. The live rejection below proves the tested cross-role path; person-level Sybil across unrelated wallets remains impossible to prevent here. |
 | GEN transfer safety   | **Not closed**                                                    | All four paths emit external ghost messages. Synchronous exceptions occur before one-way accounting changes, but neither this contract nor the installed client exposes an authenticated external-delivery receipt or safe recovery path. Studio cannot model the live ghost layer. |
 
 ## 1. Evidence integrity
@@ -48,11 +48,31 @@ Covered by host emulation:
 
 These are mocked runtime tests. They prove the contract gate in the host model, not real-world source truth and not live validator/ghost behavior.
 
+### Read-only live deterministic evidence
+
+The current Studio Next deployment was queried without sending a transaction during this audit. `get_config()` reports `typed_policy_prefix=MAX_PAYMENT_WEI:` and evidence authority `0xC8Ba5DA455b011863F2ECa76a6fa21E62Cc91B87`. `get_campaign(1)`, `get_campaign_policies(1,0,50)`, `get_campaign_proposals(1,0,50)`, `get_proposal_challenges(1,0,50)`, and `get_proposal_challenges(2,0,50)` provide the following authoritative state:
+
+- The stored policy is `MAX_PAYMENT_WEI:2000000000000000000` (2 GEN).
+- Proposal `1` is 3 GEN and `VETOED`; Challenge `1` is `VALID`, accepted, deterministic, and winner `1`.
+- Proposal `2` is 1 GEN and `CLEARED` with escrow state `PAID`; Challenge `2` is `INVALID`, not accepted, deterministic, and `policy_match=false`.
+- Agent `1` and Agent `2` are active and have the expected current owner/operator wallets. `get_agent_by_wallet` returns `1` and `2` respectively.
+
+The finalized receipt for the genuine challenge submission is `0x1c632d2093423d08fbe20b48949e66d282de4a1bbf9a4e7f43436e12a8d9084f`. The receipt targets the current address, decodes to `submit_challenge(1,1,...)`, is `Finalized · Accepted`, returns `1`, and contains successful leader/validator execution. The false-challenge hash supplied for Challenge `2` was not found by the current receipt endpoint during this audit; the `INVALID` result is independently supported by the live challenge/proposal reads, while the transaction-hash claim remains unverified here. Evaluation and resolution transaction hashes were not located, so the state outcomes are not attributed to invented hashes.
+
+Other finalized receipts independently retrieved during this audit are:
+
+- Agent `1` registration: `0x34c69efe82bab26086dafd30c3f2a6951db15bb4f13e149bd0c212e3bf237e53`, current contract, `register_agent`, `FINISHED_WITH_RETURN`, return `1`.
+- Agent `2` registration: `0x7ff805a0daecc7ed8d1a6551a397fb44abe6c8af7722209a2234503e78ccdac9`, current contract, `register_agent`, `FINISHED_WITH_RETURN`, return `2`.
+- Proposal `2` creation: `0x79f77fd755cc8c3fb864bce4544d205fde8d5ab45fd0a40f47de8c8ee710545a`, current contract, `add_proposal`, `FINISHED_WITH_RETURN`, return `2`.
+- Cross-role rejection: `0xb0df48e8ff4ffb36a0b6abc89936183789a31ff4dc868a7b3898525e87843548`, current contract, `register_agent`, `FINISHED_WITH_ERROR`, leader payload `[EXPECTED] operator already used`.
+
+The supplied false-challenge hash is retained as an unverified reference only; the current RPC receipt endpoint returned “transaction not found” for it. No evaluation, reward-claim, proposal-refund, campaign-remainder, or external child-transfer receipt was located.
+
 ## Registration incident and frontend remediation
 
-The only transaction found from the reported wallet (`0xC8Ba5DA455b011863F2ECa76a6fa21E62Cc91B87`) to the current deployment was `0x9896d1dfe7ae93dc30f1422e78dc8cef3edc97f3c43362b6030b7a7d9848954d`. It was `FINALIZED · ACCEPTED` with `FINISHED_WITH_RETURN`, but decoded calldata was `{}` and the leader return payload was `null`. It was therefore not a registration transaction and did not mutate agent state; `get_agent_by_wallet` returned `0` afterward.
+The earlier registration-incident candidate transaction from the reported wallet (`0xC8Ba5DA455b011863F2ECa76a6fa21E62Cc91B87`) was `0x9896d1dfe7ae93dc30f1422e78dc8cef3edc97f3c43362b6030b7a7d9848954d`. It was `FINALIZED · ACCEPTED` with `FINISHED_WITH_RETURN`, but decoded calldata was `{}` and the leader return payload was `null`. It was therefore not a registration transaction. At that time, `get_agent_by_wallet` returned `0`; this historical incident must not be confused with the later Agent 1 registration and current campaign state.
 
-For comparison, the older deployment transaction `0x896849a7e6c273bff8626c2f9c7ba9a88dcd840e779b9b9f239e8cdd594423af` encoded `register_agent` with empty optional operator/payout arguments, but its actual leader rollback was `[EXPECTED] owner already used` and its execution result was `FINISHED_WITH_ERROR`. This was a duplicate-owner rejection on the older deployment, not proof that empty optional fields caused the failure. The frontend now supplies explicit owner addresses when those fields are blank, rejects malformed registration adapter arguments, parses returned IDs from the GenLayer leader payload, performs the authoritative wallet lookup after finality, and separates post-finality verification errors from contract execution errors. The frontend regression suite is 91 passed across 11 files. No new live registration was submitted.
+For comparison, the older deployment transaction `0x896849a7e6c273bff8626c2f9c7ba9a88dcd840e779b9b9f239e8cdd594423af` encoded `register_agent` with empty optional operator/payout arguments, but its actual leader rollback was `[EXPECTED] owner already used` and its execution result was `FINISHED_WITH_ERROR`. This was a duplicate-owner rejection on the older deployment, not proof that empty optional fields caused the failure. The frontend now supplies explicit owner addresses when those fields are blank, rejects malformed registration adapter arguments, parses returned IDs from the GenLayer leader payload, performs the authoritative wallet lookup after finality, and separates post-finality verification errors from contract execution errors. The current frontend regression suite is 117 passed across 11 files. No new live registration was submitted during this audit.
 
 The production bundle inspected during this investigation embedded the current contract address and registration method. The chain does not retain the original UI state, so the exact client-side cause of the empty current call cannot be proven beyond the malformed calldata itself. The fix prevents the known blank-field path and makes future failures diagnosable without treating a successful no-op as registration success.
 
@@ -64,9 +84,13 @@ The production bundle inspected during this investigation embedded the current c
 
 ### Direct wallet recognition
 
-`get_agent_by_wallet(wallet_address)` uses the existing `identity_agent_id` map. It parses the supplied address, rejects a zero mapping, the `MAX_U256` retired-operator sentinel, and missing agent records, then verifies the live owner/operator fields before returning the ID. It returns `0` for not-found, retired, payout-only, or stale mappings; inactive agents remain discoverable but are still rejected by `submit_challenge`. No duplicate storage, history scan, sequential ID scan, or sender inference is used.
+`get_agent_by_wallet(wallet_address)` uses the existing `identity_agent_id` map and verifies the live owner/operator fields before returning the ID. It returns `0` for not-found, retired, payout-only, or stale mappings; no duplicate storage, history scan, sequential ID scan, or sender inference is used. The current deployment read returned Agent `1` for the owner wallet and Agent `2` for the second owner wallet.
 
-The host test `test_wallet_lookup_returns_only_current_owner_or_operator` covers owner, current operator, payout-only address, unregistered wallet, invalid address, inactive status, and replaced-operator invalidation. Frontend tests cover the on-chain result path, historical-contract fallback, wallet switching, stale local associations, and operator replacement. Cross-device recognition is expected only after the replacement exposing this view is deployed; the historical address cannot provide it.
+The host test `test_wallet_lookup_returns_only_current_owner_or_operator` covers owner, current operator, payout-only address, unregistered wallet, invalid address, inactive status, and replaced-operator invalidation. Frontend tests cover the on-chain result path, historical-contract fallback, wallet switching, stale local associations, and operator replacement. The current deployment now exposes and read-verifies this view; historical addresses cannot provide it.
+
+### Live cross-role rejection
+
+Receipt `0xb0df48e8ff4ffb36a0b6abc89936183789a31ff4dc868a7b3898525e87843548` targets the current deployment and decodes to `register_agent` from `0x69885Aeb09f8cB62FFF8b2224C66791bFCaed317` with operator `0xC8Ba5DA455b011863F2ECa76a6fa21E62Cc91B87`, already reserved by Agent `1`. It is `FINISHED_WITH_ERROR`; the leader receipt payload is `[EXPECTED] operator already used`. This is finalized live evidence for the tested cross-role collision. It does not prove person-level uniqueness across unrelated wallets.
 
 ## 3. GEN transfer safety
 
@@ -99,20 +123,20 @@ Host tests reconcile these ledgers after normal settlement, invalid/inconclusive
 - `genvm-lint lint contracts/Veto.py --json`: passed, 3 AST checks.
 - The exact pinned runner is locally present in the official GenVM Manager `v0.6.0-rc6` universal bundle (`sha256:bd30580f911338d5533460eca8ed714dec371de5803c04e41dbb96430aea7b6e`; extracted runner ZIP `sha256:2cbcc8389744c4321852d2c0b4bfcef0729bfd22467e2aaf0d4d204cf6f015eb`). The official arm64 macOS execution bundle matches the release `SHA256SUMS` (`sha256:25995423dedb468d5d70673759e90dfaf33fe1b455982c343c2795952ae5e312`). The bundled executor and manager install checks passed. A prior exact-runner sequence completed **20 successful GenVM calls with 0 manager failures** for the unchanged lifecycle, typed-policy, attestation, identity, and external-message paths. This is exact local GenVM execution, not validator consensus or live ghost delivery, and it predates the new wallet-lookup method. Preliminary harness failures were corrected fee-schema/balance setup errors and were not counted as contract failures. Stock `genvm-lint check` remains blocked by its `E101` lookup for a `.tar` runner member even though the official current bundle contains the exact `.zip`; this is not full nondeterministic semantic/validator validation.
 - Direct/integration Studio harness: unavailable (`gltest` and `gltest.config.yaml` absent).
-- Existing-deployment read verification for `0x1F7df5...` confirmed `get_config`, `get_campaign_count`, `get_global_accounting`, `get_agent_by_wallet`, and the 30-method reflected interface. No deployment receipt hash, validator round, native GEN receipt, child transfer, or funded transaction was supplied or executed in this worktree.
+- Existing-deployment read verification for `0x1F7df5...` confirmed `get_config`, `get_campaign_count`, `get_global_accounting`, `get_agent_by_wallet`, campaign/policy/proposal/challenge state, and the 30-method reflected interface. The genuine challenge and cross-role rejection receipts above were independently retrieved read-only. The false-challenge hash supplied for Challenge `2` was not found by the current receipt endpoint; its state outcome was read from the contract. No evaluation, reward-claim, refund, remainder, or child-transfer receipt was located.
 - Pinned GenVM validation: AST lint passed; exact manager/executor execution passed for deterministic and emission cases listed above. The official bundle contains `runners/py-genlayer/5jycge4q8k23462jtb0b9fyey1s9qz928sz2nbrd9mg4sxqg2qng.zip`. Stock `genvm-lint validate`, `schema`, `setup`, and `check` cannot consume the current `.zip` layout (`E101`, missing `.tar` member), so nondeterministic semantic validation through the stock tool remains unproven. No other runner was substituted.
-- Frontend: TypeScript passed; Vitest **91 passed across 11 files**; ESLint passed with 0 errors and 15 existing warnings; Prettier and production build passed with advisory chunk/configuration warnings.
+- Frontend: TypeScript passed; Vitest **117 passed across 11 files**; ESLint passed with 0 errors and 18 existing warnings; Prettier and production build passed with advisory chunk/configuration warnings.
 
 ## Contract artifact
 
 - Final local size: **51,986 UTF-8 bytes**; 14 bytes below the 52,000-byte limit.
 - Final local SHA-256: **`6041e7b033e9ab619e784412fce3becc9ce1214e850d09375ee3aca784b3016d`**.
-- Old deployed address: `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` (unchanged).
+- Historical deployed addresses: `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` and `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4` (unchanged).
 - Current deployed address: `0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd`; deployment transaction hash was not supplied.
 
 ## PAPITO response draft
 
-The fabricated-evidence finding is remediated at the reward boundary for typed objective policies in the local source, but is not closed as independent proof for semantic policies. Typed objective policies are settled from immutable on-chain values and ignore attacker JSON. Semantic policies retain GenLayer evaluation but require a one-time authority attestation bound to the exact chain, contract, proposal snapshot, policy, evidence hash, and expiry. A valid hash or validator agreement alone cannot authorize GEN. This is an explicit single-authority trust model, not cryptographic proof of public-source truth: a compromised or colluding authority can still authorize a false digest. The local source awaits manual deployment; no funded lifecycle or external delivery proof exists.
+The fabricated-evidence finding is remediated at the reward boundary for typed objective policies in the current deployment and is supported by the live deterministic outcomes above. Typed objective policies are settled from immutable on-chain values and ignore attacker JSON. Semantic policies retain GenLayer evaluation but require a one-time authority attestation bound to the exact chain, contract, proposal snapshot, policy, evidence hash, and expiry. A valid hash or validator agreement alone cannot authorize GEN. This is an explicit single-authority trust model, not cryptographic proof of public-source truth: a compromised or colluding authority can still authorize a false digest. Full semantic-authority attack resistance against a compromised authority is therefore not claimed.
 
 The owner/operator bypass is fixed with one shared reservation map, including replacement and retired-operator checks. Local adversarial tests pass. Separate wallets controlled by one person remain outside the contract’s identity model.
 

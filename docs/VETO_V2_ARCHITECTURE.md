@@ -1,6 +1,6 @@
 # VETO secure architecture (single-contract remediation)
 
-This document keeps the historical filename used by the repository. The remediation is implemented in the existing `contracts/Veto.py`; it is not a second VETO project or a parallel codebase. A replacement deployment, if approved, would still have separate on-chain state because GenLayer deployment does not migrate storage automatically.
+This document keeps the historical filename used by the repository. The remediation is implemented in the existing `contracts/Veto.py`; it is not a second VETO project or a parallel codebase. The current Studio Next deployment is `0x1F7df5eb0888c8B4628DC11895B8a90C7e3aF6Dd`; older deployments have separate state. Any future replacement deployment, if approved, would also have separate on-chain state because GenLayer deployment does not migrate storage automatically.
 
 ## Decision
 
@@ -53,7 +53,7 @@ This is stronger than the old model but not a claim that the authority itself is
 
 ## Migration
 
-The old deployment at `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` is unchanged. A replacement deployment starts with no campaigns, agents, claimable rewards, or escrow. Existing users and balances cannot be silently moved. Any migration must be separately designed, funded, approved, and tested; legacy semantic findings cannot be retroactively made authenticated by changing this source.
+The historical deployments at `0xa0ede9BfE3C35455E18dDA2881D7dC801BD958c8` and `0x302798B9e6C5603527E67A55fBdA47Ddea97E6F4` are unchanged. A replacement deployment starts with no campaigns, agents, claimable rewards, or escrow. Existing users and balances cannot be silently moved. Any migration must be separately designed, funded, approved, and tested; legacy semantic findings cannot be retroactively made authenticated by changing this source.
 
 ## Acceptance evidence still required
 
